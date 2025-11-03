@@ -1,5 +1,3 @@
-# .github/labels.yml
-
 - name: core
   color: "0052cc"
   description: "Fundamental runtime or platform logic"
