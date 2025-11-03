@@ -1,0 +1,298 @@
+# .github/labels.yml
+
+labels:
+  # 🧱 1. App (Core Platform + UX)
+  - name: core
+    color: "0052cc"
+    description: "Fundamental runtime or platform logic"
+  - name: p2p
+    color: "6f42c1"
+    description: "Peer-to-peer networking layer"
+  - name: protocol
+    color: "00a591"
+    description: "Protocol design, serialization, message passing"
+  - name: networking
+    color: "d73a49"
+    description: "Connectivity, NAT traversal, mesh protocols"
+  - name: storage
+    color: "1f51ff"
+    description: "Decentralized file or data storage layer"
+  - name: encryption
+    color: "0052cc"
+    description: "Encryption, signing, and key management"
+  - name: zkp
+    color: "fbca04"
+    description: "Zero-knowledge proof systems"
+  - name: security
+    color: "b60205"
+    description: "Vulnerabilities, exploits, and security fixes"
+  - name: performance
+    color: "0e8a16"
+    description: "Optimization, efficiency, caching"
+  - name: infra
+    color: "d0a0ff"
+    description: "Deployment, servers, node orchestration"
+  - name: ci
+    color: "a2eeef"
+    description: "CI/CD automation and workflows"
+  - name: testing
+    color: "c2e0c6"
+    description: "Unit, integration, e2e tests"
+  - name: frontend
+    color: "0366d6"
+    description: "UI components (Dioxus), layout, rendering"
+  - name: ui/ux
+    color: "fbca04"
+    description: "User experience design and improvements"
+  - name: design
+    color: "ffd33d"
+    description: "Layout, themes, interaction design"
+  - name: routing
+    color: "0052cc"
+    description: "Page navigation logic"
+  - name: localization
+    color: "0e8a16"
+    description: "Translations and regional support"
+  - name: accessibility
+    color: "006b75"
+    description: "Accessibility (a11y) support and usability"
+  - name: notifications
+    color: "1f8feb"
+    description: "Toast, alerts, system messages"
+  - name: mobile
+    color: "0e8a16"
+    description: "Mobile adaptations / Tauri mobile target"
+  - name: desktop
+    color: "5319e7"
+    description: "Desktop integration"
+  - name: branding
+    color: "ffab70"
+    description: "Icons, logo, branding elements"
+  - name: messaging
+    color: "0052cc"
+    description: "Chat, direct and group messaging modules"
+  - name: mesh-networking
+    color: "6f42c1"
+    description: "Offline or local mesh message relay"
+  - name: presence
+    color: "1f51ff"
+    description: "Online/offline status, peer discovery"
+  - name: calls
+    color: "00a591"
+    description: "Voice/video communication modules"
+
+  # 👤 2. Individual (Identity, Privacy, Social, Learning)
+  - name: identity
+    color: "0366d6"
+    description: "User identity management"
+  - name: real-human-proof
+    color: "b60205"
+    description: "zk identity verification"
+  - name: authentication
+    color: "0052cc"
+    description: "Login, wallet linking, account auth"
+  - name: profile
+    color: "1f51ff"
+    description: "User profile pages, avatars, bios"
+  - name: privacy
+    color: "0e8a16"
+    description: "Anonymous operation, metadata protection"
+  - name: permissions
+    color: "0052cc"
+    description: "Access control, capabilities"
+  - name: data-protection
+    color: "5319e7"
+    description: "Local encryption, backup, data safety"
+  - name: social
+    color: "ffd33d"
+    description: "General social interactions"
+  - name: feed
+    color: "ffab70"
+    description: "Posts, timelines, updates"
+  - name: friends
+    color: "006b75"
+    description: "Contact lists, followers/following"
+  - name: groups
+    color: "0e8a16"
+    description: "Group chats, communities"
+  - name: media
+    color: "1f8feb"
+    description: "Image/video upload or embedding"
+  - name: moderation
+    color: "b60205"
+    description: "Content reporting and filtering"
+  - name: content
+    color: "c2e0c6"
+    description: "Posts, messages, shared data"
+  - name: education
+    color: "0052cc"
+    description: "Education systems and courses"
+  - name: courses
+    color: "1f51ff"
+    description: "Course creation and tracking"
+  - name: certificates
+    color: "0e8a16"
+    description: "Credential issuance/validation"
+  - name: learning
+    color: "0366d6"
+    description: "Study material, assignments"
+  - name: evaluation
+    color: "5319e7"
+    description: "Testing, scoring mechanisms"
+
+  # 💱 3. Economy (Blockchain, Finance, Marketplace)
+  - name: blockchain
+    color: "0052cc"
+    description: "L1 chain logic"
+  - name: consensus
+    color: "1f51ff"
+    description: "Validator system, block production"
+  - name: staking
+    color: "0e8a16"
+    description: "Delegation and staking rewards"
+  - name: token
+    color: "0366d6"
+    description: "Native or utility token systems"
+  - name: bridge
+    color: "5319e7"
+    description: "Cross-chain or interoperability features"
+  - name: wallet
+    color: "1f8feb"
+    description: "Key and account management"
+  - name: transactions
+    color: "0052cc"
+    description: "Sending, receiving, transactions history"
+  - name: fees
+    color: "006b75"
+    description: "Gas or cost mechanisms"
+  - name: smart-contracts
+    color: "ffd33d"
+    description: "On-chain programs"
+  - name: marketplace
+    color: "ffab70"
+    description: "Decentralized exchange/commerce"
+  - name: jobs
+    color: "0e8a16"
+    description: "Decentralized job board / gig economy"
+  - name: bounties
+    color: "0366d6"
+    description: "Contributor rewards and tasks"
+  - name: escrow
+    color: "5319e7"
+    description: "Dispute resolution / safe transactions"
+  - name: reputation
+    color: "006b75"
+    description: "Peer review and ratings"
+  - name: payments
+    color: "0052cc"
+    description: "Crypto payments, tipping, transfers"
+  - name: tokenomics
+    color: "d73a49"
+    description: "Economic modelling and supply design"
+  - name: rewards
+    color: "0e8a16"
+    description: "Incentive mechanisms"
+  - name: treasury
+    color: "ffd33d"
+    description: "DAO treasury or funding pool"
+
+  # 🏛️ 4. Government (Governance, Law, Policy)
+  - name: governance
+    color: "0366d6"
+    description: "General decision-making systems"
+  - name: voting
+    color: "1f51ff"
+    description: "Proposal and ballot systems"
+  - name: delegation
+    color: "0e8a16"
+    description: "Representative voting / committees"
+  - name: quorum
+    color: "5319e7"
+    description: "Voting thresholds and validation"
+  - name: constitution
+    color: "0052cc"
+    description: "Governing documents and rules"
+  - name: policy
+    color: "006b75"
+    description: "Enforcement or moderation rules"
+  - name: dispute-resolution
+    color: "0e8a16"
+    description: "Appeals and moderation cases"
+  - name: reputation-weighted-voting
+    color: "ffab70"
+    description: "Sybil-resistance governance"
+  - name: dao
+    color: "ffd33d"
+    description: "Decentralized autonomous organization management"
+  - name: community
+    color: "006b75"
+    description: "General community-related issues"
+  - name: onboarding
+    color: "0e8a16"
+    description: "New user & contributor onboarding"
+  - name: events
+    color: "5319e7"
+    description: "Governance events, elections, meetings"
+
+  # ⚙️ 5. Global / Infrastructure (Project Management & Ops)
+  - name: meta
+    color: "bfdadc"
+    description: "Repo structure or organizational tasks"
+  - name: setup
+    color: "c2e0c6"
+    description: "Environment setup or bootstrap tasks"
+  - name: documentation
+    color: "0e8a16"
+    description: "Docs, guides, READMEs, wikis"
+  - name: proposal
+    color: "006b75"
+    description: "Improvement proposals (RFCs)"
+  - name: roadmap
+    color: "0052cc"
+    description: "Milestone and high-level planning"
+  - name: devx
+    color: "5319e7"
+    description: "Developer experience enhancements"
+  - name: tooling
+    color: "1f8feb"
+    description: "SDKs, CLIs, utilities"
+  - name: build
+    color: "ffd33d"
+    description: "Compilation, packaging"
+  - name: integration
+    color: "006b75"
+    description: "Internal / external service integration"
+  - name: bug
+    color: "b60205"
+    description: "Broken functionality"
+  - name: enhancement
+    color: "0e8a16"
+    description: "Improvements to existing features"
+  - name: refactor
+    color: "5319e7"
+    description: "Code restructuring"
+  - name: cleanup
+    color: "c2e0c6"
+    description: "Removing dead code, minor fixes"
+  - name: release
+    color: "0052cc"
+    description: "Version update, changelog"
+  - name: deployment
+    color: "0e8a16"
+    description: "Packaging and distribution"
+  - name: automation
+    color: "1f8feb"
+    description: "Bots, workflows, actions"
+  - name: good first issue
+    color: "0e8a16"
+    description: "Good task for first-time contributors"
+  - name: help wanted
+    color: "00a591"
+    description: "Looking for community help"
+  - name: discussion
+    color: "5319e7"
+    description: "Open design or strategy discussion"
+  - name: question
+    color: "c2e0c6"
+    description: "Request for clarification or feedback"
+
