@@ -1,0 +1,150 @@
+# P2P SuperApp Proprietary License
+
+**Copyright (c) 2024 Pietro Barozzi. All Rights Reserved.**
+
+---
+
+## 1. Definitions
+
+- **"Project"** refers to the P2P SuperApp software, including all source code, documentation, assets, and related materials in this repository.
+- **"Owner"** refers to Pietro Barozzi, the sole copyright holder of the Project.
+- **"Contributor"** refers to any individual or entity that submits code, documentation, or other materials to the Project.
+- **"Contribution"** refers to any code, documentation, ideas, or other materials submitted to the Project.
+
+---
+
+## 2. Grant of Limited Access
+
+The Owner grants you a limited, non-exclusive, non-transferable right to:
+
+- **View** the source code for educational and reference purposes
+- **Run** the software locally for personal, non-commercial use
+- **Contribute** improvements to the Project under the terms of this license
+
+---
+
+## 3. Restrictions
+
+You may NOT:
+
+### 3.1 Fork or Derive
+Create any fork, derivative work, adaptation, or modification of the Project for use outside of contributing back to this Project.
+
+### 3.2 Redistribute
+Copy, distribute, publish, or otherwise transfer the Project or any portion thereof to any third party.
+
+### 3.3 Extract or Reuse Code
+Copy, extract, or reuse any code snippets, algorithms, data structures, or implementation patterns from the Project in any other project, whether open source or proprietary.
+
+### 3.4 Commercial Use
+Use the Project or any part thereof for commercial purposes without explicit written permission from the Owner.
+
+### 3.5 Remove Notices
+Remove, alter, or obscure any copyright, trademark, or other proprietary notices from the Project.
+
+### 3.6 Sublicense
+Grant any rights to the Project to any third party.
+
+---
+
+## 4. Contribution Terms
+
+By submitting a Contribution to this Project, you agree to the following terms:
+
+### 4.1 Ownership Transfer
+You **irrevocably assign and transfer** to the Owner all right, title, and interest in and to your Contribution, including all intellectual property rights. This includes, but is not limited to:
+- Copyrights
+- Patent rights
+- Trade secret rights
+- Any other proprietary rights
+
+### 4.2 Waiver of Rights
+You waive any and all claims you may have to the Contribution, including moral rights to the extent permitted by applicable law.
+
+### 4.3 Representation and Warranty
+You represent and warrant that:
+- You have the legal right to make the Contribution
+- Your Contribution does not infringe on any third-party rights
+- Your Contribution does not contain any malicious code
+- You are not bound by any agreement that would prevent you from making the Contribution
+
+### 4.4 No Compensation
+Contributions are made voluntarily. You are not entitled to any compensation, royalties, or other payment for your Contribution.
+
+### 4.5 Perpetual License to Contributor
+Upon acceptance of your Contribution, the Owner grants you a perpetual, non-exclusive, royalty-free license to use your Contribution as part of the Project for personal, non-commercial purposes only.
+
+---
+
+## 5. No Warranty
+
+THE PROJECT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE PROJECT OR THE USE OR OTHER DEALINGS IN THE PROJECT.
+
+---
+
+## 6. Indemnification
+
+You agree to indemnify, defend, and hold harmless the Owner from and against any claims, damages, losses, costs, and expenses (including reasonable attorneys' fees) arising from:
+- Your use of the Project
+- Your violation of this License
+- Your violation of any third-party rights
+
+---
+
+## 7. Termination
+
+### 7.1 Automatic Termination
+Your rights under this License terminate automatically if you fail to comply with any of its terms.
+
+### 7.2 Effect of Termination
+Upon termination:
+- You must cease all use of the Project
+- You must destroy all copies of the Project in your possession
+- Any Contributions you made remain the property of the Owner
+
+---
+
+## 8. Governing Law
+
+This License shall be governed by and construed in accordance with the laws of Italy, without regard to its conflict of law provisions.
+
+---
+
+## 9. Severability
+
+If any provision of this License is held to be unenforceable, such provision shall be reformed only to the extent necessary to make it enforceable, and the remaining provisions shall continue in full force and effect.
+
+---
+
+## 10. Entire Agreement
+
+This License constitutes the entire agreement between you and the Owner regarding the Project and supersedes all prior agreements and understandings.
+
+---
+
+## 11. Contact
+
+For permissions, inquiries, or questions regarding this license, contact:
+
+**Pietro Barozzi**  
+Email: pietroelaura@icloud.com
+
+---
+
+## Summary
+
+| What You CAN Do | What You CANNOT Do |
+|-----------------|-------------------|
+| ✅ View the code | ❌ Fork the project |
+| ✅ Run locally for personal use | ❌ Redistribute |
+| ✅ Contribute improvements | ❌ Use code in other projects |
+| ✅ Learn from the architecture | ❌ Commercial use |
+| | ❌ Remove copyright notices |
+
+**By using or contributing to this Project, you agree to be bound by this License.**
+
+---
+
+*Last updated: December 2024*
