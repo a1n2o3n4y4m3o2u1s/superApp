@@ -64,6 +64,10 @@ pub enum DagPayload {
     Candidacy(CandidacyPayload),
     #[serde(rename = "candidacy_vote:v1")]
     CandidacyVote(CandidacyVotePayload),
+    #[serde(rename = "report:v1")]
+    Report(ReportPayload),
+    #[serde(rename = "file:v1")]
+    File(FilePayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -182,6 +186,21 @@ pub struct CandidacyPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CandidacyVotePayload {
     pub candidacy_id: String, // CID of the candidacy node
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReportPayload {
+    pub target_id: String, // CID of the reported content
+    pub reason: String, // e.g. "Spam", "Illegal", "Harassment"
+    pub details: String, 
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FilePayload {
+    pub name: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub blob_cid: String, // CID of the BlobPayload
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

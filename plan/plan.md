@@ -303,9 +303,9 @@ A fully decentralized web built on the same P2P network, accessible via the dedi
 **[ ] Mobile Support** (iOS/Android via Dioxus Mobile)
 **[ ] Web Client** (WASM)
 **[ ] File Sharing System**
-**[ ] Group Chats**
-**[ ] Reputation System**
-**[ ] Decentralized Moderation**
+**[x] Group Chats**
+**[/] Reputation System**
+**[x] Decentralized Moderation**
 **[ ] Recall & Oversight Mechanisms** (Citizen-initiated audits & recalls)
 **[ ] Transparency Dashboard** (Real-time ledger of all public actions/funds)
 **[ ] Emergency Proposal Pathway** (5% fast-track tool)

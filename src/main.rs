@@ -96,12 +96,14 @@ fn App() -> Element {
     let mut candidate_tallies = use_signal(|| std::collections::HashMap::<String, usize>::new());
     let mut reputation = use_signal(|| None::<backend::dag::ReputationDetails>);
     let mut my_web_pages = use_signal(|| Vec::<DagNode>::new());
+    let mut reports = use_signal(|| Vec::<DagNode>::new());
+    let mut files = use_signal(|| Vec::<DagNode>::new());
     
     // Groups
     let mut groups = use_signal(|| Vec::<DagNode>::new());
     let mut group_messages = use_signal(|| std::collections::HashMap::<String, Vec<(DagNode, String)>>::new());
     
-    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies, reputation, my_web_pages, groups, group_messages });
+    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies, reputation, my_web_pages, reports, groups, group_messages, files });
 
     // Initialize backend and context
     use_context_provider(|| {
@@ -198,6 +200,9 @@ fn App() -> Element {
                              "candidacy_vote:v1" => {
                                  // Tally will be fetched separately, just trigger a refresh
                              }
+                             "file:v1" => {
+                                 files.write().insert(0, node.clone());
+                             }
                              _ => {}
                          }
                     }
@@ -250,9 +255,6 @@ fn App() -> Element {
                     AppEvent::MyWebPagesFetched(pages) => {
                         my_web_pages.set(pages);
                     }
-                    AppEvent::MyWebPagesFetched(pages) => {
-                        my_web_pages.set(pages);
-                    }
                     AppEvent::GroupsFetched(fetched_groups) => {
                         groups.set(fetched_groups);
                     }
@@ -264,6 +266,18 @@ fn App() -> Element {
                                  }
                              }
                          }
+                    }
+                    AppEvent::ReportsFetched(fetched_reports) => {
+                        reports.set(fetched_reports);
+                    }
+                    AppEvent::MyFilesFetched(fetched_files) => {
+                        files.set(fetched_files);
+                    }
+                    AppEvent::FileUploaded(node) => {
+                        // Already handled via BlockReceived usually, but ensure it's in list if not
+                        // Actually BlockReceived handles pushing to list if we add case there.
+                        // But let's verify.
+                        // I added "file:v1" handler in BlockReceived above.
                     }
                     _ => {}
                 }

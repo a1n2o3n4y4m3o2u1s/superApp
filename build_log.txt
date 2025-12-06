@@ -1,0 +1,198 @@
+    Checking super-app v0.1.0 (/Users/a1n2o3n4y4m3o2u1s/Desktop/superApp)
+warning: use of deprecated struct `sha2::digest::generic_array::GenericArray`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:315:75
+    |
+315 | ...                   let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                 ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated struct `sha2::digest::generic_array::GenericArray`: please upgrade to generic-array 1.x
+   --> src/components/messaging_page.rs:553:85
+    |
+553 | ...                   let nonce_arr = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                     ^^^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:727:73
+    |
+727 |                     let key = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes()));
+    |                                                                         ^^^^^^^^^^
+
+warning: unused variable: `peer`
+    --> src/backend/mod.rs:2115:56
+     |
+2115 |                     request_response::Event::Message { peer, message } => {
+     |                                                        ^^^^ help: try ignoring the field: `peer: _`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `request_id`
+    --> src/backend/mod.rs:2261:45
+     |
+2261 | ...   let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::LocalSearch(query.clone()));
+     |           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:310:68
+    |
+310 |                         let key_array = aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret_bytes);
+    |                                                                    ^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:315:89
+    |
+315 | ...                   let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                               ^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/components/messaging_page.rs:551:80
+    |
+551 | ...                   let key_arr = aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+    |                                                                ^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/components/messaging_page.rs:553:99
+    |
+553 | ...                   let nonce_arr = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                                   ^^^^^^^^^^
+
+error[E0277]: the trait bound `ListenerCallback<MouseData>: SuperFrom<{closure@...}, _>` is not satisfied
+   --> src/components/browser_page.rs:170:30
+    |
+170 |                     onclick: submit_action,
+    |                     ---------^^^^^^^^^^^^^
+    |                     |        |
+    |                     |        the trait `SuperFrom<{closure@src/components/browser_page.rs:34:25: 34:33}, _>` is not implemented for `ListenerCallback<MouseData>`
+    |                     required by a bound introduced by this call
+    |
+    = help: the following other types implement trait `SuperFrom<T, M>`:
+              `ListenerCallback<T>` implements `SuperFrom<Callback<dioxus::prelude::Event<T>>>`
+              `ListenerCallback<T>` implements `SuperFrom<Function, MarkerWrapper<Marker>>`
+    = note: required for `{closure@src/components/browser_page.rs:34:25: 34:33}` to implement `SuperInto<ListenerCallback<MouseData>, _>`
+note: required by a bound in `onclick`
+   --> /Users/a1n2o3n4y4m3o2u1s/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dioxus-html-0.7.1/src/events/mouse.rs:47:1
+    |
+ 47 | / impl_event! {
+ 48 | |     MouseData;
+ 49 | |
+ 50 | |     /// Execute a callback when a button is clicked.
+...   |
+ 73 | |     onclick
+    | |     ------- required by a bound in this function
+...   |
+104 | |     onmouseup
+105 | | }
+    | |_^ required by this bound in `onclick`
+    = note: the full name for the type has been written to '/Users/a1n2o3n4y4m3o2u1s/Desktop/superApp/target/debug/deps/super_app-cc73a5e2ba261be2.long-type-728351146452949926.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+    = note: this error originates in the macro `impl_event` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+  --> src/backend/wasm.rs:21:13
+   |
+21 |         let mut store_data = StoreData {
+   |             ----^^^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/backend/wasm.rs:131:13
+    |
+131 |         let mut store_data = StoreData {
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/backend/mod.rs:340:13
+    |
+340 |         let mut target_peers = connected_peers.clone();
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `app_state`
+   --> src/components/messaging_page.rs:480:9
+    |
+480 |     let app_state = use_context::<AppState>();
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_state`
+
+warning: unused variable: `cmd_tx`
+   --> src/components/messaging_page.rs:481:9
+    |
+481 |     let cmd_tx = use_context::<UnboundedSender<AppCmd>>();
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cmd_tx`
+
+warning: unreachable pattern
+   --> src/main.rs:254:21
+    |
+251 |                     AppEvent::MyWebPagesFetched(pages) => {
+    |                     ---------------------------------- matches all the relevant values
+...
+254 |                     AppEvent::MyWebPagesFetched(pages) => {
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/main.rs:66:9
+   |
+66 |     let mut blocks = use_signal(|| Vec::<DagNode>::new());
+   |         ----^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:67:9
+   |
+67 |     let mut history = use_signal(|| Vec::<DagNode>::new());
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:68:9
+   |
+68 |     let mut user_profiles = use_signal(|| std::collections::HashMap::<String, backend::dag::ProfilePayload>::new());
+   |         ----^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:69:9
+   |
+69 |     let mut page_title = use_signal(|| "SuperApp".to_string());
+   |         ----^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:70:9
+   |
+70 |     let mut browser_url = use_signal(|| "sp://welcome".to_string());
+   |         ----^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:71:9
+   |
+71 |     let mut browser_content = use_signal(|| None::<String>);
+   |         ----^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/main.rs:72:9
+   |
+72 |     let mut active_tab = use_signal(|| "feed".to_string());
+   |         ----^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `super-app` (bin "super-app") generated 22 warnings
+error: could not compile `super-app` (bin "super-app") due to 1 previous error; 22 warnings emitted

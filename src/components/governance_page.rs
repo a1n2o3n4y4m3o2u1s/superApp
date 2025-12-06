@@ -24,6 +24,7 @@ pub fn GovernanceComponent() -> Element {
     use_effect(move || {
         let _ = cmd_tx_effect.send(AppCmd::FetchProposals);
         let _ = cmd_tx_effect.send(AppCmd::FetchCandidates);
+        let _ = cmd_tx_effect.send(AppCmd::FetchReports);
     });
 
     // Fetch tallies when proposals change
@@ -93,12 +94,12 @@ pub fn GovernanceComponent() -> Element {
                     div { class: "flex gap-2",
                         button {
                             class: "btn btn-secondary",
-                            onclick: move |_| show_candidacy_modal.set(true),
+                            onclick: move |_: Event<MouseData>| show_candidacy_modal.set(true),
                             "🗳️ Run for Office"
                         }
                         button {
                             class: "btn btn-primary",
-                            onclick: move |_| show_create_modal.set(true),
+                            onclick: move |_: Event<MouseData>| show_create_modal.set(true),
                             "📝 Draft Proposal"
                         }
                     }
@@ -116,6 +117,11 @@ pub fn GovernanceComponent() -> Element {
                     class: if active_tab() == "elections" { "btn btn-primary" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set("elections".to_string()),
                     "🏛️ Elections"
+                }
+                button {
+                    class: if active_tab() == "moderation" { "btn btn-primary" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set("moderation".to_string()),
+                    "🛡️ Moderation"
                 }
             }
 
@@ -246,7 +252,7 @@ pub fn GovernanceComponent() -> Element {
                         }
                     }
                 }
-            } else {
+            } else if active_tab() == "elections" {
                 // Elections Tab
                 div { class: "grid gap-6",
                     // Ministry of Verification
@@ -406,6 +412,47 @@ pub fn GovernanceComponent() -> Element {
                                                                 },
                                                                 "Vote"
                                                             }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Moderation Tab
+                div { class: "grid gap-6",
+                    div { class: "panel",
+                        h2 { class: "text-xl font-bold mb-4", "🚨 Decentralized Moderation Reports" }
+                        p { class: "text-[var(--text-secondary)] mb-6", "Review reports submitted by the community. As a verified citizen, your vigilance helps keep the network safe." }
+                        
+                        {
+                            let reports = app_state.reports.read();
+                            if reports.is_empty() {
+                                rsx! { p { class: "text-[var(--text-muted)]", "No active reports." } }
+                            } else {
+                                rsx! {
+                                    for node in reports.iter() {
+                                        if let DagPayload::Report(r) = &node.payload {
+                                            {
+                                                let rid = node.id.clone();
+                                                let author_short = &node.author[0..8];
+                                                rsx! {
+                                                    div { key: "{rid}", class: "border-b border-[var(--border-default)] py-4 last:border-0",
+                                                        div { class: "flex justify-between items-start",
+                                                            div {
+                                                                div { class: "flex items-center gap-2 mb-1",
+                                                                    span { class: "px-2 py-0.5 rounded text-xs bg-red-900/20 text-red-400 font-bold", "{r.reason}" }
+                                                                    span { class: "text-xs text-[var(--text-muted)]", "Reported by {author_short}..." }
+                                                                }
+                                                                div { class: "font-mono text-sm bg-[var(--bg-default)] p-1 rounded inline-block mb-2", "{r.target_id}" }
+                                                                p { class: "text-sm text-[var(--text-secondary)]", "{r.details}" }
+                                                            }
+                                                            // Future: Action buttons (Ignore, Uphold, etc.)
                                                         }
                                                     }
                                                 }

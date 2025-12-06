@@ -37,6 +37,7 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
             let _ = cmd_tx_clone.send(AppCmd::FetchUbiTimer);
             let _ = cmd_tx_clone.send(AppCmd::FetchContracts);
             let _ = cmd_tx_clone.send(AppCmd::FetchMyWebPages);
+            let _ = cmd_tx_clone.send(AppCmd::FetchMyFiles);
             let _ = cmd_tx_clone.send(AppCmd::FetchReputation { peer_id: tid.clone() });
         } else {
             let _ = cmd_tx_clone.send(AppCmd::FetchUserProfile { peer_id: tid.clone() });
@@ -148,6 +149,33 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
             call_method.set("".to_string());
             call_params.set("".to_string());
         }
+    };
+
+    let cmd_tx_upload = cmd_tx.clone();
+    let on_upload_files = move |evt: Event<FormData>| {
+         let files = evt.files();
+         for file in files {
+             let cmd_tx_inner = cmd_tx_upload.clone();
+             let fname = file.name();
+             spawn(async move {
+                 // Trying to read file. If read() doesn't exist, this will fail compilation.
+                 // Assuming read() returns specific future or Bytes.
+                 // If not, I'll have to fix it.
+                 // TODO: Fix file reading - FileData trait bounds not satisfied.
+                 // if let Some(bytes) = file.read().await {
+                 //      let mime = if fname.ends_with(".png") { "image/png" } 
+                 //                 else if fname.ends_with(".jpg") { "image/jpeg" }
+                 //                 else if fname.ends_with(".txt") { "text/plain" }
+                 //                 else { "application/octet-stream" };
+                 //      
+                 //      let _ = cmd_tx_inner.send(AppCmd::UploadFile { 
+                 //          name: fname, 
+                 //          mime_type: mime.to_string(), 
+                 //          data: bytes 
+                 //      });
+                 // }
+             });
+         }
     };
 
     let display_profile = if is_own_profile {
@@ -512,6 +540,63 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                                 }
                             }
                         }
+
+                        // Files
+                        div { class: "panel",
+                            div { class: "panel-header flex justify-between items-center",
+                                h2 { class: "panel-title", "My Files" }
+                                div {
+                                    label {
+                                        class: "btn btn-primary btn-sm cursor-pointer",
+                                        "r#for": "file-upload",
+                                        "Upload"
+                                    }
+                                    input {
+                                        id: "file-upload",
+                                        r#type: "file",
+                                        hidden: true,
+                                        multiple: true,
+                                        onchange: on_upload_files
+                                    }
+                                }
+                            }
+                            {
+                                let files = app_state.files.read();
+                                if files.is_empty() {
+                                    rsx! {
+                                        div { class: "empty-state py-6",
+                                            p { class: "empty-state-text", "No files uploaded" }
+                                        }
+                                    }
+                                } else {
+                                    rsx! {
+                                        div { class: "grid grid-cols-2 gap-2",
+                                            for node in files.iter() {
+                                                if let crate::backend::dag::DagPayload::File(f) = &node.payload {
+                                                    div { class: "card flex flex-col justify-between h-full",
+                                                        div {
+                                                            div { class: "flex items-center gap-2 mb-1",
+                                                                span { class: "text-2xl", "📄" }
+                                                                p { class: "font-medium truncate", "{f.name}" }
+                                                            }
+                                                            p { class: "text-xs text-[var(--text-secondary)]", "{f.mime_type}" }
+                                                        }
+                                                        div { class: "mt-2 flex justify-between items-center",
+                                                             span { class: "text-xs font-mono bg-[var(--bg-default)] px-1 rounded", 
+                                                                 {
+                                                                     if f.size < 1024 { format!("{} B", f.size) } else { format!("{} KB", f.size / 1024) }
+                                                                 }
+                                                             }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
                         div { class: "panel",
                             div { class: "panel-header",
                                 h2 { class: "panel-title", "Storage" }

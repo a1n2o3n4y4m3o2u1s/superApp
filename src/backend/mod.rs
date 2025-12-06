@@ -84,6 +84,10 @@ pub enum AppCmd {
     FetchCandidateTally { candidacy_id: String },
     FetchReputation { peer_id: String },
     FetchMyWebPages,
+    ReportContent { target_id: String, reason: String, details: String },
+    FetchReports,
+    UploadFile { name: String, mime_type: String, data: Vec<u8> },
+    FetchMyFiles,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +127,9 @@ pub enum AppEvent {
     CandidateTallyFetched { candidacy_id: String, votes: usize },
     ReputationFetched(dag::ReputationDetails),
     MyWebPagesFetched(Vec<dag::DagNode>),
+    ReportsFetched(Vec<dag::DagNode>),
+    FileUploaded(dag::DagNode),
+    MyFilesFetched(Vec<dag::DagNode>),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -2036,6 +2043,137 @@ impl Backend {
                          let _ = self.event_tx.send(AppEvent::GroupMessagesFetched(decrypted_messages));
                      }
                      Err(e) => eprintln!("Failed to fetch group messages: {:?}", e),
+                }
+            }
+            AppCmd::ReportContent { target_id, reason, details } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot report content: User is not verified.");
+                    return;
+                }
+                let payload = dag::DagPayload::Report(dag::ReportPayload { target_id, reason, details });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    _ => vec![],
+                };
+
+                match dag::DagNode::new(
+                    "report:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                         println!("Created report node: {}", node.id);
+                         let _ = self.store.put_node(&node);
+                         let _ = self.store.update_head(&author_hex, &node.id);
+                         let topic = gossipsub::IdentTopic::new("blocks");
+                         let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                         let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                         self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create report node: {:?}", e),
+                }
+            }
+            AppCmd::FetchReports => {
+                match self.store.get_reports() {
+                    Ok(reports) => {
+                        let _ = self.event_tx.send(AppEvent::ReportsFetched(reports));
+                    }
+                    Err(e) => eprintln!("Failed to fetch reports: {:?}", e),
+                }
+            }
+            AppCmd::UploadFile { name, mime_type, data } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot upload file: User is not verified.");
+                    return;
+                }
+                
+                // 1. Create Blob (File Content)
+                let blob_payload = dag::DagPayload::Blob(dag::BlobPayload { 
+                    mime_type: mime_type.clone(), 
+                    data: base64::encode(&data) 
+                });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                // Get head for blob (using empty prev for blobs to avoid linearizing content updates if not needed? 
+                // Or just use current head. Let's use current head to keep chain.)
+                let mut prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    _ => vec![],
+                };
+
+                let blob_node = match dag::DagNode::new(
+                    "blob:v1".to_string(),
+                    blob_payload,
+                    prev.clone(), // Use same head
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        // We don't necessarily emit BlockReceived for the raw blob itself to the UI, 
+                        // unless we want to.
+                        node
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to create blob node: {:?}", e);
+                        return;
+                    }
+                };
+
+                // Update prev to be the blob we just created
+                prev = vec![blob_node.id.clone()];
+
+                // 2. Create File (Metadata)
+                let file_payload = dag::DagPayload::File(dag::FilePayload {
+                    name,
+                    size: data.len() as u64,
+                    mime_type,
+                    blob_cid: blob_node.id.clone(),
+                });
+
+                match dag::DagNode::new(
+                    "file:v1".to_string(),
+                    file_payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        println!("Created file node: {}", node.id);
+                         let _ = self.store.put_node(&node);
+                         let _ = self.store.update_head(&author_hex, &node.id);
+                         let topic = gossipsub::IdentTopic::new("blocks");
+                         let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                         
+                         // Notify UI
+                         let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                         let _ = self.event_tx.send(AppEvent::FileUploaded(node.clone()));
+                         
+                         self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create file node: {:?}", e),
+                }
+            }
+            AppCmd::FetchMyFiles => {
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                match self.store.get_my_files(&author_hex) {
+                     Ok(files) => {
+                         let _ = self.event_tx.send(AppEvent::MyFilesFetched(files));
+                     }
+                     Err(e) => eprintln!("Failed to fetch files: {:?}", e),
                 }
             }
         }

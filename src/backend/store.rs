@@ -798,17 +798,17 @@ impl Store {
                 // For now, let's assume if they have >0 valid proofs targeting them they are verified.
                 // Or we can just check if they are "EligibleForFounder" logic if we want.
                 // Let's count incoming proofs.
-                let mut valid_proofs = 0;
-                for node in &nodes {
-                     if let DagPayload::Proof(ref p) = node.payload {
-                         if p.target_pubkey == pubkey {
-                             valid_proofs += 1;
-                         }
-                     }
-                }
-                if valid_proofs >= 3 { // Simplified verification threshold
-                    verification_score += 50; 
-                }
+                 let mut valid_proofs = 0;
+                 for node in &nodes {
+                      if let DagPayload::Proof(ref p) = node.payload {
+                          if p.target_pubkey == pubkey {
+                              valid_proofs += 1;
+                          }
+                      }
+                 }
+                 if valid_proofs >= 3 { // Simplified verification threshold
+                     verification_score += 50; 
+                 }
             }
         }
 
@@ -845,6 +845,18 @@ impl Store {
             }
         })
     }
+
+    pub fn get_reports(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut reports = Vec::new();
+        for node in nodes {
+             if let DagPayload::Report(_) = node.payload {
+                 reports.push(node);
+             }
+        }
+        reports.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(reports)
+    }
     pub fn get_my_groups(&self, my_pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut groups = Vec::new();
@@ -874,6 +886,24 @@ impl Store {
         }
         messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         Ok(messages)
+    }
+
+    pub fn get_my_files(&self, pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut files = Vec::new();
+        for node in nodes {
+            if node.author == pubkey {
+                if let DagPayload::File(_) = node.payload {
+                    files.push(node);
+                }
+            }
+        }
+        files.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(files)
+    }
+
+    pub fn get_file(&self, cid: &str) -> Result<Option<DagNode>, Box<dyn std::error::Error>> {
+        self.get_node(cid)
     }
 }
 
