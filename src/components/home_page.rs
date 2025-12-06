@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
-use crate::backend::{AppCmd, AppEvent};
-use crate::backend::dag::{DagNode, DagPayload, PostPayload};
+use crate::backend::AppCmd;
+use crate::backend::dag::{DagPayload, PostPayload};
 use base64::{Engine as _, engine::general_purpose};
 
 #[component]

@@ -10,7 +10,7 @@ use libp2p::{
     futures::StreamExt,
     gossipsub,
     identity::Keypair,
-    request_response::{self, OutboundRequestId, ResponseChannel},
+    request_response::{self, OutboundRequestId},
     swarm::SwarmEvent,
     PeerId,
     kad,
@@ -23,7 +23,7 @@ use std::path::Path;
 use store::Store;
 use aes_gcm::{
     aead::{Aead, KeyInit, AeadCore},
-    Aes256Gcm, Nonce,
+    Aes256Gcm,
 };
 use rand::rngs::OsRng;
 use tokio::sync::mpsc;
@@ -39,8 +39,11 @@ pub enum AppCmd {
     PublishBlob { mime_type: String, data: String },
     FetchPosts,
     FetchLocalPosts { geohash_prefix: String },
-    SendMessage { recipient: String, content: String },
+    SendMessage { recipient: String, content: String, group_id: Option<String> },
     FetchMessages { peer_id: String },
+    CreateGroup { name: String, members: Vec<String> },
+    FetchGroups,
+    FetchGroupMessages { group_id: String },
     FetchMyProfile,
     MintToken { amount: u64 },
     SendToken { recipient: String, amount: u64 },
@@ -59,6 +62,9 @@ pub enum AppCmd {
     FetchBlock { cid: String, peer_id: Option<String> },
     FetchStorageStats,
     CreateListing { title: String, description: String, price: u64, image_cid: Option<String> },
+    BuyListing { listing_id: String },
+    UpdateListingStatus { listing_id: String, status: dag::ListingStatus },
+    SearchListings { query: String },
     FetchListings,
 
     SearchWeb { query: String },
@@ -66,6 +72,18 @@ pub enum AppCmd {
     CallContract { contract_id: String, method: String, params: String },
     FetchContracts,
     FetchContractState { contract_id: String },
+    PublishProposal { title: String, description: String, r#type: dag::ProposalType },
+    VoteProposal { proposal_id: String, vote: dag::VoteType },
+    FetchProposals,
+    FetchProposalVotes { proposal_id: String },
+    FetchProposalTally { proposal_id: String },
+    // Election commands
+    DeclareCandidacy { ministry: dag::Ministry, platform: String },
+    VoteForCandidate { candidacy_id: String },
+    FetchCandidates,
+    FetchCandidateTally { candidacy_id: String },
+    FetchReputation { peer_id: String },
+    FetchMyWebPages,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +95,8 @@ pub enum AppEvent {
     HistoryFetched(Vec<dag::DagNode>),
     MessageReceived(dag::DagNode, String), // Node + Decrypted Content
     MessagesFetched(Vec<(dag::DagNode, String)>), // List of (Node, Decrypted Content)
+    GroupsFetched(Vec<dag::DagNode>),
+    GroupMessagesFetched(Vec<(dag::DagNode, String)>),
     MyIdentity(String),
     ProfileFetched(Option<dag::ProfilePayload>),
     BalanceFetched(i64),
@@ -94,6 +114,15 @@ pub enum AppEvent {
     WebSearchResults(Vec<dag::DagNode>),
     ContractsFetched(Vec<dag::DagNode>),
     ContractStateFetched { contract_id: String, state: String },
+    ProposalsFetched(Vec<dag::DagNode>),
+    ProposalVotesFetched { proposal_id: String, votes: Vec<dag::DagNode> },
+    /// Vote tally: (yes, no, abstain, petition, unique_voters)
+    ProposalTallyFetched { proposal_id: String, yes: usize, no: usize, abstain: usize, petition: usize, unique_voters: usize },
+    // Election events
+    CandidatesFetched(Vec<dag::DagNode>),
+    CandidateTallyFetched { candidacy_id: String, votes: usize },
+    ReputationFetched(dag::ReputationDetails),
+    MyWebPagesFetched(Vec<dag::DagNode>),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -652,7 +681,7 @@ impl Backend {
                     Err(e) => eprintln!("Failed to fetch messages: {:?}", e),
                 }
             }
-            AppCmd::SendMessage { recipient, content } => {
+            AppCmd::SendMessage { recipient, content, group_id } => {
                 // Note: We might want to allow unverified users to message verified users (e.g. to ask for verification)?
                 // The plan says "No app access whatsoever until verified".
                 // So strict blocking for now.
@@ -702,6 +731,7 @@ impl Backend {
                                 ciphertext: hex::encode(ciphertext_bytes),
                                 nonce: hex::encode(nonce),
                                 ephemeral_pubkey: hex::encode(ephemeral_public.to_bytes()),
+                                group_id: group_id.clone(),
                             });
 
                             // Get previous head for this user if any
@@ -1531,6 +1561,7 @@ impl Backend {
                     price,
                     image_cid,
                     status: dag::ListingStatus::Active,
+                    ref_cid: None,
                 });
                 
                 let author_pubkey = self.keypair.public();
@@ -1569,6 +1600,442 @@ impl Backend {
                         self.replicate_block(&node);
                     }
                     Err(e) => eprintln!("Failed to create listing node: {:?}", e),
+                }
+            }
+
+            AppCmd::BuyListing { listing_id } => {
+                if !self.is_caller_verified() {
+                     eprintln!("Cannot buy item: User is not verified.");
+                     return;
+                }
+                // 1. Fetch listing to get price and seller
+                 match self.store.get_node(&listing_id) {
+                     Ok(Some(node)) => {
+                         if let dag::DagPayload::Listing(listing) = node.payload {
+                             // 2. Initiate Transfer
+                             let memo = format!("Purchase: {}", listing_id);
+                             let recipient = node.author.clone(); // Seller
+                             
+                             // Reuse SendToken logic essentially
+                             let payload = dag::DagPayload::Token(dag::TokenPayload {
+                                action: dag::TokenAction::Burn, // Transfer is a burn targeted at someone
+                                amount: listing.price,
+                                target: Some(recipient),
+                                memo: Some(memo),
+                                ref_cid: None,
+                            });
+                            
+                            let author_pubkey = self.keypair.public();
+                            let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                             let prev = match self.store.get_head(&author_hex) {
+                                Ok(Some(cid)) => vec![cid],
+                                _ => vec![],
+                            };
+                            
+                            match dag::DagNode::new("token:v1".to_string(), payload, prev, &self.keypair, 0) {
+                                Ok(tnode) => {
+                                    println!("Created purchase transfer node: {}", tnode.id);
+                                    let _ = self.store.put_node(&tnode);
+                                    let _ = self.store.update_head(&author_hex, &tnode.id);
+                                     let topic = gossipsub::IdentTopic::new("blocks");
+                                    let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, tnode.id.as_bytes());
+                                     let _ = self.event_tx.send(AppEvent::BlockReceived(tnode.clone()));
+                                     self.replicate_block(&tnode);
+                                     // Refresh balance
+                                     let _ = self.event_tx.send(AppEvent::BalanceFetched(self.store.get_balance(&author_hex).unwrap_or(0)));
+                                }
+                                Err(e) => eprintln!("Failed to create purchase node: {:?}", e),
+                            }
+                         } else {
+                             eprintln!("Node {} is not a listing", listing_id);
+                         }
+                     }
+                     _ => eprintln!("Listing {} not found", listing_id),
+                 }
+            }
+
+            AppCmd::UpdateListingStatus { listing_id, status } => {
+                 if !self.is_caller_verified() {
+                     eprintln!("Cannot update listing: User is not verified.");
+                     return;
+                }
+                // 1. Fetch original to verify ownership and get details
+                 match self.store.get_node(&listing_id) {
+                     Ok(Some(node)) => {
+                         let author_pubkey = self.keypair.public();
+                         let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                         
+                         if node.author != author_hex {
+                             eprintln!("Cannot update listing: Not the author.");
+                             return;
+                         }
+
+                         if let dag::DagPayload::Listing(listing) = node.payload {
+                             // 2. Create new node with updated status
+                             let new_payload = dag::DagPayload::Listing(dag::ListingPayload {
+                                 title: listing.title,
+                                 description: listing.description,
+                                 price: listing.price,
+                                 image_cid: listing.image_cid,
+                                 status: status,
+                                 ref_cid: Some(listing.ref_cid.clone().unwrap_or(listing_id.clone())),
+                             });
+
+                             let prev = match self.store.get_head(&author_hex) {
+                                Ok(Some(cid)) => vec![cid],
+                                _ => vec![],
+                            };
+                            
+                             match dag::DagNode::new("listing:v1".to_string(), new_payload, prev, &self.keypair, 0) {
+                                Ok(new_node) => {
+                                     println!("Updated listing status: {}", new_node.id);
+                                     let _ = self.store.put_node(&new_node);
+                                     let _ = self.store.update_head(&author_hex, &new_node.id);
+                                     let topic = gossipsub::IdentTopic::new("blocks");
+                                     let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, new_node.id.as_bytes());
+                                     let _ = self.event_tx.send(AppEvent::BlockReceived(new_node.clone()));
+                                     self.replicate_block(&new_node);
+                                     // Refresh listings
+                                     if let Ok(listings) = self.store.get_active_listings(50) {
+                                         let _ = self.event_tx.send(AppEvent::ListingsFetched(listings));
+                                     }
+                                }
+                                Err(e) => eprintln!("Failed to update listing: {:?}", e),
+                             }
+                         }
+                     }
+                     _ => eprintln!("Listing not found"),
+                 }
+            }
+
+            AppCmd::SearchListings { query } => {
+                match self.store.search_listings(&query) {
+                    Ok(listings) => {
+                         let _ = self.event_tx.send(AppEvent::ListingsFetched(listings));
+                    }
+                    Err(e) => eprintln!("Failed to search listings: {:?}", e),
+                }
+            }
+            AppCmd::PublishProposal { title, description, r#type } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot publish proposal: User is not verified.");
+                    return;
+                }
+                let payload = dag::DagPayload::Proposal(dag::ProposalPayload { title, description, r#type });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(e) => {
+                        eprintln!("Failed to get head: {:?}", e);
+                        vec![]
+                    }
+                };
+
+                match dag::DagNode::new(
+                    "proposal:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        println!("Created proposal node: {}", node.id);
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store proposal node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                            eprintln!("Failed to publish proposal CID: {:?}", e);
+                        }
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create proposal node: {:?}", e),
+                }
+            }
+            AppCmd::VoteProposal { proposal_id, vote } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot vote: User is not verified.");
+                    return;
+                }
+                let payload = dag::DagPayload::Vote(dag::VotePayload { proposal_id, vote });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(e) => {
+                        eprintln!("Failed to get head: {:?}", e);
+                        vec![]
+                    }
+                };
+
+                match dag::DagNode::new(
+                    "vote:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        println!("Created vote node: {}", node.id);
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store vote node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                            eprintln!("Failed to publish vote CID: {:?}", e);
+                        }
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create vote node: {:?}", e),
+                }
+            }
+            AppCmd::FetchProposals => {
+                match self.store.get_proposals() {
+                    Ok(proposals) => {
+                        let _ = self.event_tx.send(AppEvent::ProposalsFetched(proposals));
+                    }
+                    Err(e) => eprintln!("Failed to fetch proposals: {:?}", e),
+                }
+            }
+            AppCmd::FetchProposalVotes { proposal_id } => {
+                match self.store.get_votes_for_proposal(&proposal_id) {
+                    Ok(votes) => {
+                        let _ = self.event_tx.send(AppEvent::ProposalVotesFetched { proposal_id, votes });
+                    }
+                    Err(e) => eprintln!("Failed to fetch votes for proposal: {:?}", e),
+                }
+            }
+            AppCmd::FetchProposalTally { proposal_id } => {
+                match self.store.get_proposal_vote_tally(&proposal_id) {
+                    Ok((yes, no, abstain, petition, unique_voters)) => {
+                        let _ = self.event_tx.send(AppEvent::ProposalTallyFetched {
+                            proposal_id,
+                            yes,
+                            no,
+                            abstain,
+                            petition,
+                            unique_voters,
+                        });
+                    }
+                    Err(e) => eprintln!("Failed to fetch vote tally: {:?}", e),
+                }
+            }
+            // Election command handlers
+            AppCmd::DeclareCandidacy { ministry, platform } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot declare candidacy: User is not verified.");
+                    return;
+                }
+                let payload = dag::DagPayload::Candidacy(dag::CandidacyPayload { ministry, platform });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(e) => {
+                        eprintln!("Failed to get head: {:?}", e);
+                        vec![]
+                    }
+                };
+
+                match dag::DagNode::new(
+                    "candidacy:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        println!("Created candidacy node: {}", node.id);
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store candidacy node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                            eprintln!("Failed to publish candidacy CID: {:?}", e);
+                        }
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create candidacy node: {:?}", e),
+                }
+            }
+            AppCmd::VoteForCandidate { candidacy_id } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot vote: User is not verified.");
+                    return;
+                }
+                let payload = dag::DagPayload::CandidacyVote(dag::CandidacyVotePayload { candidacy_id });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(e) => {
+                        eprintln!("Failed to get head: {:?}", e);
+                        vec![]
+                    }
+                };
+
+                match dag::DagNode::new(
+                    "candidacy_vote:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                        println!("Created candidacy vote node: {}", node.id);
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store candidacy vote node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                            eprintln!("Failed to publish candidacy vote CID: {:?}", e);
+                        }
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create candidacy vote node: {:?}", e),
+                }
+            }
+            AppCmd::FetchCandidates => {
+                match self.store.get_all_candidates() {
+                    Ok(candidates) => {
+                        let _ = self.event_tx.send(AppEvent::CandidatesFetched(candidates));
+                    }
+                    Err(e) => eprintln!("Failed to fetch candidates: {:?}", e),
+                }
+            }
+            AppCmd::FetchCandidateTally { candidacy_id } => {
+                match self.store.get_candidate_tally(&candidacy_id) {
+                    Ok(votes) => {
+                        let _ = self.event_tx.send(AppEvent::CandidateTallyFetched { candidacy_id, votes });
+                    }
+                    Err(e) => eprintln!("Failed to fetch candidate tally: {:?}", e),
+                }
+            }
+            AppCmd::FetchReputation { peer_id } => {
+                match self.store.get_reputation(&peer_id) {
+                    Ok(details) => {
+                        let _ = self.event_tx.send(AppEvent::ReputationFetched(details));
+                    }
+                    Err(e) => eprintln!("Failed to fetch reputation: {:?}", e),
+                }
+            }
+            AppCmd::FetchMyWebPages => {
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                match self.store.get_my_web_pages(&author_hex) {
+                    Ok(nodes) => {
+                        let _ = self.event_tx.send(AppEvent::MyWebPagesFetched(nodes));
+                    }
+                    Err(e) => eprintln!("Failed to fetch my web pages: {:?}", e),
+                }
+            }
+            
+            AppCmd::CreateGroup { name, members } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot create group: User is not verified.");
+                    return;
+                }
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                
+                // Ensure I am in the members list
+                let mut all_members = members.clone();
+                if !all_members.contains(&author_hex) {
+                    all_members.push(author_hex.clone());
+                }
+
+                let payload = dag::DagPayload::Group(dag::GroupPayload { name, members: all_members, owner: author_hex.clone() });
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    _ => vec![],
+                };
+
+                match dag::DagNode::new(
+                    "group:v1".to_string(),
+                    payload,
+                    prev,
+                    &self.keypair,
+                    0
+                ) {
+                    Ok(node) => {
+                         println!("Created group node: {}", node.id);
+                         if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store group node: {:?}", e);
+                            return;
+                        }
+                         if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        
+                        // Notify UI
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        
+                        // Force refresh of my groups
+                        let _ = self.event_tx.send(AppEvent::GroupsFetched(vec![node.clone()]));
+                    }
+                    Err(e) => eprintln!("Failed to create group node: {:?}", e),
+                }
+            }
+
+            AppCmd::FetchGroups => {
+                let author_pubkey = self.keypair.public();
+                let author_hex = hex::encode(author_pubkey.encode_protobuf());
+                match self.store.get_my_groups(&author_hex) {
+                    Ok(groups) => {
+                        let _ = self.event_tx.send(AppEvent::GroupsFetched(groups));
+                    }
+                    Err(e) => eprintln!("Failed to fetch groups: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchGroupMessages { group_id } => {
+                match self.store.get_group_messages(&group_id) {
+                     Ok(messages) => {
+                         let decrypted_messages = messages.into_iter().map(|node| {
+                             let content = self.try_decrypt(&node);
+                             (node, content)
+                         }).collect();
+                         let _ = self.event_tx.send(AppEvent::GroupMessagesFetched(decrypted_messages));
+                     }
+                     Err(e) => eprintln!("Failed to fetch group messages: {:?}", e),
                 }
             }
         }
@@ -1740,9 +2207,23 @@ impl Backend {
                             kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders { key, providers, .. })) => {
                                 let url = String::from_utf8(key.to_vec()).unwrap_or_default();
                                 println!("Found providers for {}: {:?}", url, providers);
-                                for peer in providers {
-                                    let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::Fetch(url.clone()));
-                                    self.pending_requests.insert(request_id, url.clone());
+                                
+                                // Check if this was a search query (key starts with search:term:)
+                                if url.starts_with("search:term:") {
+                                    let query = url.trim_start_matches("search:term:").to_string();
+                                    println!("Sending LocalSearch request for query: {}", query);
+                                    for peer in providers {
+                                        let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::LocalSearch(query.clone()));
+                                        // We don't necessarily need to track this in pending_requests for a block CID, 
+                                        // but we can track it to handle errors if we want.
+                                        // But BlockResponse::SearchResults processing doesn't rely on pending_requests map for CID.
+                                    }
+                                } else {
+                                    // Normal content fetch
+                                    for peer in providers {
+                                        let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::Fetch(url.clone()));
+                                        self.pending_requests.insert(request_id, url.clone());
+                                    }
                                 }
                             }
                             kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. })) => {
@@ -2481,4 +2962,66 @@ mod tests {
              }
         }
         assert!(delete_verified, "State verification failed (delete)");
+    }
+
+    #[tokio::test]
+    async fn test_dht_search_integration() {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let store = Store::new_in_memory().unwrap();
+        
+        let mut backend = Backend::new(store, cmd_rx, event_tx, Some(Keypair::generate_ed25519())).await.unwrap();
+        
+        tokio::spawn(async move {
+            backend.run().await;
+        });
+
+        // 1. Publish content with tags (this simulates becoming a provider for the tag)
+        // We need to be verified first
+        cmd_tx.send(AppCmd::PublishProfile {
+            name: "Founder".to_string(),
+            bio: "First".to_string(),
+        }).unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        cmd_tx.send(AppCmd::PublishWebPage {
+            url: "sp://cat.super/home".to_string(),
+            title: "Cat Page".to_string(),
+            content: "<h1>Cats</h1>".to_string(),
+            description: "A page about cats".to_string(),
+            tags: vec!["cat".to_string()],
+        }).unwrap();
+
+        // Wait for publishing to settle (block received, etc.)
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // 2. Search for "cat"
+        // In a real DHT scenario with multiple nodes, one node would search and find the other.
+        // Here we are testing the backend logic to initiate the search correctly.
+        // Since we are running single node in this test, we won't find *other* providers,
+        // but we can verify that the local search works and the code doesn't crash when triggering DHT search.
+        // To properly test interacting with another node via DHT in a unit test is complex due to swarm setup.
+        // However, we corrected the request type in the code above.
+        
+        // Let's at least trigger the local search path which we also touched.
+        cmd_tx.send(AppCmd::SearchWeb {
+            query: "cat".to_string(),
+        }).unwrap();
+
+        // 3. Verify Local Results
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() > Duration::from_secs(2) {
+                panic!("Timed out waiting for WebSearchResults");
+            }
+            if let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(100), event_rx.recv()).await {
+                if let AppEvent::WebSearchResults(nodes) = event {
+                    assert!(!nodes.is_empty());
+                    if let dag::DagPayload::Web(web) = &nodes[0].payload {
+                        assert_eq!(web.title, "Cat Page");
+                    }
+                    break;
+                }
+            }
+        }
     }

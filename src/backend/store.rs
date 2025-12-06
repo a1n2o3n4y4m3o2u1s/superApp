@@ -263,25 +263,88 @@ impl Store {
         Ok(posts)
     }
 
-    /// Get active marketplace listings
+    /// Get active marketplace listings, ensuring we only show the latest version of each listing
     pub fn get_active_listings(&self, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let mut listings: Vec<DagNode> = self.get_all_nodes()?
             .into_iter()
-            .filter(|n| {
-                if n.r#type == "listing:v1" {
-                    if let DagPayload::Listing(ref listing) = n.payload {
-                        return listing.status == crate::backend::dag::ListingStatus::Active;
-                    }
+            .filter(|n| n.r#type == "listing:v1")
+            .collect();
+            
+        // Sort by timestamp descending so latest is first
+        listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        let mut latest_listings_map: std::collections::HashMap<String, DagNode> = std::collections::HashMap::new();
+
+        for node in listings {
+            if let DagPayload::Listing(ref listing) = node.payload {
+                // The "Chain ID" is the ref_cid if it exists (meaning it points to the original),
+                // OR the node's own ID if it has no ref_cid (meaning it IS the original).
+                let chain_id = listing.ref_cid.clone().unwrap_or(node.id.clone());
+                
+                if !latest_listings_map.contains_key(&chain_id) {
+                    latest_listings_map.insert(chain_id, node.clone());
                 }
-                false
+            }
+        }
+        
+        // Filter for only Active status
+        let mut active_listings: Vec<DagNode> = latest_listings_map.into_values()
+            .filter(|node| {
+                if let DagPayload::Listing(ref listing) = node.payload {
+                    listing.status == crate::backend::dag::ListingStatus::Active
+                } else {
+                    false
+                }
             })
             .collect();
 
-        listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        if listings.len() > limit {
-            listings.truncate(limit);
+        active_listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        if active_listings.len() > limit {
+            active_listings.truncate(limit);
         }
-        Ok(listings)
+        Ok(active_listings)
+    }
+
+    pub fn search_listings(&self, query: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let mut listings: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.r#type == "listing:v1")
+            .collect();
+            
+        // Sort by timestamp descending so latest is first
+        listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        let mut latest_listings_map: std::collections::HashMap<String, DagNode> = std::collections::HashMap::new();
+
+        for node in listings {
+            if let DagPayload::Listing(ref listing) = node.payload {
+                let chain_id = listing.ref_cid.clone().unwrap_or(node.id.clone());
+                if !latest_listings_map.contains_key(&chain_id) {
+                    latest_listings_map.insert(chain_id, node.clone());
+                }
+            }
+        }
+        
+        // Filter by query and Active status
+        let query_lower = query.to_lowercase();
+        let mut results: Vec<DagNode> = latest_listings_map.into_values()
+            .filter(|node| {
+                if let DagPayload::Listing(ref listing) = node.payload {
+                    if listing.status == crate::backend::dag::ListingStatus::Active {
+                         listing.title.to_lowercase().contains(&query_lower) || listing.description.to_lowercase().contains(&query_lower)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        Ok(results)
     }
 
     pub fn get_messages(&self, my_id: &str, other_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
@@ -568,6 +631,249 @@ impl Store {
         //Sort by timestamp asc (execution order)
         calls.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         Ok(calls)
+    }
+
+    pub fn get_proposals(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut proposals = Vec::new();
+        for node in nodes {
+             if let DagPayload::Proposal(_) = node.payload {
+                 proposals.push(node);
+             }
+        }
+        proposals.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(proposals)
+    }
+
+    pub fn get_votes_for_proposal(&self, proposal_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut votes = Vec::new();
+        for node in nodes {
+             if let DagPayload::Vote(ref vote) = node.payload {
+                 if vote.proposal_id == proposal_id {
+                     votes.push(node);
+                 }
+             }
+        }
+        votes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(votes)
+    }
+
+    /// Get the vote tally for a proposal implementing 1-Human-1-Vote.
+    /// Each author's latest vote is the only one that counts.
+    /// Returns (yes_count, no_count, abstain_count, petition_count, unique_voters)
+    pub fn get_proposal_vote_tally(&self, proposal_id: &str) -> Result<(usize, usize, usize, usize, usize), Box<dyn std::error::Error>> {
+        let votes = self.get_votes_for_proposal(proposal_id)?;
+        
+        // Sort by timestamp descending so latest is first
+        let mut sorted_votes = votes;
+        sorted_votes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        // Only keep the latest vote from each author
+        let mut latest_votes: std::collections::HashMap<String, crate::backend::dag::VoteType> = std::collections::HashMap::new();
+        for node in sorted_votes {
+            if let DagPayload::Vote(ref vote) = node.payload {
+                // Only insert if author doesn't already have a vote (since we sorted latest first)
+                if !latest_votes.contains_key(&node.author) {
+                    latest_votes.insert(node.author.clone(), vote.vote.clone());
+                }
+            }
+        }
+        
+        // Count votes
+        let mut yes_count = 0;
+        let mut no_count = 0;
+        let mut abstain_count = 0;
+        let mut petition_count = 0;
+        
+        for vote_type in latest_votes.values() {
+            match vote_type {
+                crate::backend::dag::VoteType::Yes => yes_count += 1,
+                crate::backend::dag::VoteType::No => no_count += 1,
+                crate::backend::dag::VoteType::Abstain => abstain_count += 1,
+                crate::backend::dag::VoteType::PetitionSignature => petition_count += 1,
+            }
+        }
+        
+        let unique_voters = latest_votes.len();
+        Ok((yes_count, no_count, abstain_count, petition_count, unique_voters))
+    }
+
+    /// Get all candidacy declarations for a specific ministry
+    pub fn get_candidates(&self, ministry: &crate::backend::dag::Ministry) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut candidates = Vec::new();
+        for node in nodes {
+            if let DagPayload::Candidacy(ref candidacy) = node.payload {
+                if &candidacy.ministry == ministry {
+                    candidates.push(node);
+                }
+            }
+        }
+        candidates.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(candidates)
+    }
+
+    /// Get all candidacy declarations across all ministries
+    pub fn get_all_candidates(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut candidates = Vec::new();
+        for node in nodes {
+            if let DagPayload::Candidacy(_) = node.payload {
+                candidates.push(node);
+            }
+        }
+        candidates.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(candidates)
+    }
+
+    /// Get vote count for a candidate using 1-Human-1-Vote
+    /// Each author can only have their latest vote count
+    pub fn get_candidate_tally(&self, candidacy_id: &str) -> Result<usize, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut votes = Vec::new();
+        
+        // Collect all votes for this candidate
+        for node in nodes {
+            if let DagPayload::CandidacyVote(ref vote) = node.payload {
+                if vote.candidacy_id == candidacy_id {
+                    votes.push(node);
+                }
+            }
+        }
+        
+        // Sort by timestamp descending so latest is first
+        votes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        // Deduplicate by author (1 human = 1 vote)
+        let mut unique_voters: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for node in votes {
+            unique_voters.insert(node.author.clone());
+        }
+        
+        Ok(unique_voters.len())
+    }
+
+    pub fn get_my_web_pages(&self, pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut my_pages: std::collections::HashMap<String, (i64, DagNode)> = std::collections::HashMap::new();
+
+        for node in nodes {
+             if node.author == pubkey {
+                 if let DagPayload::Web(ref web) = node.payload {
+                     let timestamp = node.timestamp.timestamp();
+                     if let Some((existing_ts, _)) = my_pages.get(&web.url) {
+                         if timestamp > *existing_ts {
+                             my_pages.insert(web.url.clone(), (timestamp, node.clone()));
+                         }
+                     } else {
+                         my_pages.insert(web.url.clone(), (timestamp, node.clone()));
+                     }
+                 }
+             }
+        }
+
+        let mut result = Vec::new();
+        for (_, (_, node)) in my_pages {
+            result.push(node);
+        }
+        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(result)
+    }
+
+    pub fn get_reputation(&self, pubkey: &str) -> Result<crate::backend::dag::ReputationDetails, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        
+        let mut verification_score = 0;
+        let storage_score = 0; // Placeholder
+        let mut content_score = 0;
+        let mut governance_score = 0;
+
+        // 1. Identity Score
+        if let Ok(Some(profile)) = self.get_profile(pubkey) {
+            if profile.founder_id.is_some() {
+                verification_score += 100;
+            } else {
+                // Check if verified (basic check, ideally we use is_verified logic from backend but store doesn't have it easily accessible without recreating logic. 
+                // For now, let's assume if they have >0 valid proofs targeting them they are verified.
+                // Or we can just check if they are "EligibleForFounder" logic if we want.
+                // Let's count incoming proofs.
+                let mut valid_proofs = 0;
+                for node in &nodes {
+                     if let DagPayload::Proof(ref p) = node.payload {
+                         if p.target_pubkey == pubkey {
+                             valid_proofs += 1;
+                         }
+                     }
+                }
+                if valid_proofs >= 3 { // Simplified verification threshold
+                    verification_score += 50; 
+                }
+            }
+        }
+
+        // 2. Activity Scan
+        let mut vouch_count = 0;
+        let mut content_count = 0;
+        let mut vote_count = 0;
+
+        for node in &nodes {
+            if node.author == pubkey {
+                match &node.payload {
+                    DagPayload::Proof(_) => vouch_count += 1,
+                    DagPayload::Post(_) | DagPayload::Web(_) => content_count += 1,
+                    DagPayload::Vote(_) => vote_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        // Cap bonuses
+        verification_score += std::cmp::min(vouch_count * 5, 50);
+        content_score += std::cmp::min(content_count, 50);
+        governance_score += std::cmp::min(vote_count * 2, 50);
+
+        let total_score = verification_score + storage_score + content_score + governance_score;
+
+        Ok(crate::backend::dag::ReputationDetails {
+            score: total_score,
+            breakdown: crate::backend::dag::ReputationBreakdown {
+                verification: verification_score,
+                storage: storage_score,
+                content: content_score as u32,
+                governance: governance_score as u32,
+            }
+        })
+    }
+    pub fn get_my_groups(&self, my_pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut groups = Vec::new();
+
+        for node in nodes {
+            if let DagPayload::Group(ref group) = node.payload {
+                if group.members.contains(&my_pubkey.to_string()) {
+                     groups.push(node);
+                }
+            }
+        }
+        groups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(groups)
+    }
+
+    pub fn get_group_messages(&self, group_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut messages = Vec::new();
+        for node in nodes {
+            if let DagPayload::Message(ref msg) = node.payload {
+                if let Some(gid) = &msg.group_id {
+                    if gid == group_id {
+                        messages.push(node);
+                    }
+                }
+            }
+        }
+        messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        Ok(messages)
     }
 }
 

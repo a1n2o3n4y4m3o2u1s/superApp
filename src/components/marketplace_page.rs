@@ -10,6 +10,7 @@ pub fn MarketplaceComponent() -> Element {
     let mut description = use_signal(|| String::new());
     let mut price = use_signal(|| String::new());
     let mut show_create_form = use_signal(|| false);
+    let mut search_query = use_signal(|| String::new());
 
     // Fetch listings on mount
     let cmd_tx_effect = cmd_tx.clone();
@@ -42,6 +43,17 @@ pub fn MarketplaceComponent() -> Element {
         let _ = cmd_tx_refresh.send(AppCmd::FetchListings);
     };
 
+    let cmd_tx_search = cmd_tx.clone();
+    let on_search = move |_| {
+        if search_query().is_empty() {
+            let _ = cmd_tx_search.send(AppCmd::FetchListings);
+        } else {
+            let _ = cmd_tx_search.send(AppCmd::SearchListings { query: search_query() });
+        }
+    };
+
+    let my_id = app_state.local_peer_id.read().clone();
+
     rsx! {
         div { class: "page-container py-8 animate-fade-in",
             
@@ -63,6 +75,27 @@ pub fn MarketplaceComponent() -> Element {
                             onclick: move |_| show_create_form.set(!show_create_form()),
                             if show_create_form() { "Cancel" } else { "+ New Listing" }
                         }
+                    }
+                }
+            }
+
+            // Search Bar
+            div { class: "panel mb-6 flex gap-2",
+                input {
+                    class: "input flex-1",
+                    placeholder: "Search listings...",
+                    value: "{search_query}",
+                    oninput: move |e| search_query.set(e.value()),
+                    onkeydown: move |e| {
+                        if e.key() == Key::Enter {
+                            on_search(());
+                        }
+                    }
+                }
+                {
+                    let on_search_click = on_search.clone();
+                    rsx! {
+                        button { class: "btn btn-secondary", onclick: move |_| on_search_click(()), "Search" }
                     }
                 }
             }
@@ -112,34 +145,73 @@ pub fn MarketplaceComponent() -> Element {
             if app_state.listings.read().is_empty() {
                 div { class: "empty-state py-12",
                     div { class: "empty-state-icon", "🏪" }
-                    p { class: "empty-state-title", "No listings yet" }
-                    p { class: "empty-state-text", "Be the first to list something for sale!" }
+                    p { class: "empty-state-title", "No listings found" }
+                    p { class: "empty-state-text", "Try a different search or create a listing." }
                 }
             } else {
                 div { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6",
                     for node in app_state.listings.read().iter() {
                         if let DagPayload::Listing(ListingPayload { title: item_title, description: item_desc, price: item_price, .. }) = &node.payload {
-                            div {
-                                class: "panel",
-                                key: "{node.id}",
+                            {
+                                let author = node.author.clone();
+                                let is_my_listing = author == my_id;
+                                let listing_id = node.id.clone();
+                                let cmd_tx_buy = cmd_tx.clone();
+
+                                let cmd_tx_status = cmd_tx.clone();
+                                let cmd_tx_cancel = cmd_tx.clone();
+                                let listing_id_cancel = listing_id.clone();
                                 
-                                div { class: "p-4",
-                                    h3 { class: "text-lg font-semibold mb-2", "{item_title}" }
-                                    p { class: "text-[var(--text-secondary)] text-sm mb-4 line-clamp-2", "{item_desc}" }
-                                    
-                                    div { class: "flex justify-between items-center",
-                                        div {
-                                            p { class: "text-2xl font-bold", "{item_price} SUPER" }
+                                rsx! {
+                                    div {
+                                        class: "panel flex flex-col h-full",
+                                        key: "{node.id}",
+                                        
+                                        div { class: "p-4 flex-1",
+                                            h3 { class: "text-lg font-semibold mb-2", "{item_title}" }
+                                            p { class: "text-[var(--text-secondary)] text-sm mb-4 line-clamp-2", "{item_desc}" }
+                                            
+                                            div { class: "flex justify-between items-center pt-4 border-t border-[var(--border-color)]",
+                                                div {
+                                                    p { class: "text-2xl font-bold text-[var(--primary)]", "{item_price} SUPER" }
+                                                }
+                                                div { class: "flex gap-2",
+                                                    if is_my_listing {
+                                                         button {
+                                                            class: "btn btn-sm btn-secondary",
+                                                            onclick: move |_| {
+                                                                let _ = cmd_tx_status.send(AppCmd::UpdateListingStatus { listing_id: listing_id.clone(), status: crate::backend::dag::ListingStatus::Sold });
+                                                            },
+                                                            "Mark Sold"
+                                                        }
+                                                        button {
+                                                            class: "btn btn-sm btn-danger ml-1", // Assuming btn-danger exists or falls back
+                                                             onclick: move |_| {
+                                                                let _ = cmd_tx_cancel.send(AppCmd::UpdateListingStatus { listing_id: listing_id_cancel.clone(), status: crate::backend::dag::ListingStatus::Cancelled });
+                                                            },
+                                                            "Cancel"
+                                                        }
+                                                    } else {
+                                                        button {
+                                                            class: "btn btn-primary btn-sm",
+                                                            onclick: move |_| {
+                                                                let _ = cmd_tx_buy.send(AppCmd::BuyListing { listing_id: listing_id.clone() });
+                                                            },
+                                                            "Buy Now"
+                                                        }
+                                                        Link {
+                                                            to: crate::Route::UserProfileComponent { peer_id: author.clone() },
+                                                            class: "btn btn-secondary btn-sm",
+                                                            "Seller"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            p { class: "text-xs text-[var(--text-muted)] mt-3", 
+                                                "Listed by: {author.get(0..12).unwrap_or(&author)}..."
+                                            }
                                         }
-                                        Link {
-                                            to: crate::Route::UserProfileComponent { peer_id: node.author.clone() },
-                                            class: "btn btn-secondary btn-sm",
-                                            "Contact Seller"
-                                        }
-                                    }
-                                    
-                                    p { class: "text-xs text-[var(--text-muted)] mt-3", 
-                                        "Listed by: {node.author.get(0..12).unwrap_or(&node.author)}..."
                                     }
                                 }
                             }

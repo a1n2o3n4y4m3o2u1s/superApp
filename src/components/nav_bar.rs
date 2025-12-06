@@ -54,6 +54,12 @@ pub fn NavComponent() -> Element {
                                 "Market"
                             }
                             Link {
+                                to: Route::GovernanceComponent {},
+                                class: "nav-link",
+                                active_class: "active",
+                                "Govern"
+                            }
+                            Link {
                                 to: Route::MessagingComponent {},
                                 class: "nav-link",
                                 active_class: "active",

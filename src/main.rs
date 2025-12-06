@@ -18,6 +18,8 @@ use components::browser_page;
 use browser_page::BrowserComponent;
 use components::marketplace_page;
 use marketplace_page::MarketplaceComponent;
+use components::governance_page;
+use governance_page::GovernanceComponent;
 
 use dioxus::prelude::*;
 use tokio::sync::mpsc;
@@ -41,6 +43,8 @@ enum Route {
         BrowserComponent {},
         #[route("/marketplace")]
         MarketplaceComponent {},
+        #[route("/governance")]
+        GovernanceComponent {},
         #[end_layout]
     
     #[route("/verify")]
@@ -59,6 +63,13 @@ fn main() {
 fn App() -> Element {
     // Initialize global state
     let mut messages = use_signal(|| Vec::<(DagNode, String)>::new());
+    let mut blocks = use_signal(|| Vec::<DagNode>::new());
+    let mut history = use_signal(|| Vec::<DagNode>::new());
+    let mut user_profiles = use_signal(|| std::collections::HashMap::<String, backend::dag::ProfilePayload>::new());
+    let mut page_title = use_signal(|| "SuperApp".to_string());
+    let mut browser_url = use_signal(|| "sp://welcome".to_string());
+    let mut browser_content = use_signal(|| None::<String>);
+    let mut active_tab = use_signal(|| "feed".to_string());
     let mut peers = use_signal(|| HashSet::<String>::new());
     let mut local_peer_id = use_signal(|| String::new());
     let mut profile = use_signal(|| None::<backend::dag::ProfilePayload>);
@@ -78,8 +89,19 @@ fn App() -> Element {
     let mut web_search_results = use_signal(|| Vec::<DagNode>::new());
     let mut contracts = use_signal(|| Vec::<DagNode>::new());
     let mut contract_states = use_signal(|| std::collections::HashMap::<String, String>::new());
+    let mut proposals = use_signal(|| Vec::<DagNode>::new());
+    let mut proposal_votes = use_signal(|| std::collections::HashMap::<String, Vec<DagNode>>::new());
+    let mut proposal_tallies = use_signal(|| std::collections::HashMap::<String, (usize, usize, usize, usize, usize)>::new());
+    let mut candidates = use_signal(|| Vec::<DagNode>::new());
+    let mut candidate_tallies = use_signal(|| std::collections::HashMap::<String, usize>::new());
+    let mut reputation = use_signal(|| None::<backend::dag::ReputationDetails>);
+    let mut my_web_pages = use_signal(|| Vec::<DagNode>::new());
     
-    use_context_provider(|| AppState { messages, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states });
+    // Groups
+    let mut groups = use_signal(|| Vec::<DagNode>::new());
+    let mut group_messages = use_signal(|| std::collections::HashMap::<String, Vec<(DagNode, String)>>::new());
+    
+    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies, reputation, my_web_pages, groups, group_messages });
 
     // Initialize backend and context
     use_context_provider(|| {
@@ -160,6 +182,22 @@ fn App() -> Element {
                                      }
                                  }
                              }
+                             "proposal:v1" => {
+                                 proposals.write().insert(0, node.clone());
+                             }
+                             "vote:v1" => {
+                                 if let backend::dag::DagPayload::Vote(v) = &node.payload {
+                                     let mut votes_map = proposal_votes.write();
+                                     let entry = votes_map.entry(v.proposal_id.clone()).or_insert(Vec::new());
+                                     entry.push(node.clone());
+                                 }
+                             }
+                             "candidacy:v1" => {
+                                 candidates.write().insert(0, node.clone());
+                             }
+                             "candidacy_vote:v1" => {
+                                 // Tally will be fetched separately, just trigger a refresh
+                             }
                              _ => {}
                          }
                     }
@@ -190,6 +228,42 @@ fn App() -> Element {
 
                     AppEvent::ContractStateFetched { contract_id, state } => {
                         contract_states.write().insert(contract_id, state);
+                    }
+                    AppEvent::ProposalsFetched(fetched_proposals) => {
+                        proposals.set(fetched_proposals);
+                    }
+                    AppEvent::ProposalVotesFetched { proposal_id, votes } => {
+                        proposal_votes.write().insert(proposal_id, votes);
+                    }
+                    AppEvent::ProposalTallyFetched { proposal_id, yes, no, abstain, petition, unique_voters } => {
+                        proposal_tallies.write().insert(proposal_id, (yes, no, abstain, petition, unique_voters));
+                    }
+                    AppEvent::CandidatesFetched(fetched_candidates) => {
+                        candidates.set(fetched_candidates);
+                    }
+                    AppEvent::CandidateTallyFetched { candidacy_id, votes } => {
+                        candidate_tallies.write().insert(candidacy_id, votes);
+                    }
+                    AppEvent::ReputationFetched(details) => {
+                        reputation.set(Some(details));
+                    }
+                    AppEvent::MyWebPagesFetched(pages) => {
+                        my_web_pages.set(pages);
+                    }
+                    AppEvent::MyWebPagesFetched(pages) => {
+                        my_web_pages.set(pages);
+                    }
+                    AppEvent::GroupsFetched(fetched_groups) => {
+                        groups.set(fetched_groups);
+                    }
+                    AppEvent::GroupMessagesFetched(msgs) => {
+                         if !msgs.is_empty() {
+                             if let backend::dag::DagPayload::Message(p) = &msgs[0].0.payload {
+                                 if let Some(gid) = &p.group_id {
+                                     group_messages.write().insert(gid.clone(), msgs);
+                                 }
+                             }
+                         }
                     }
                     _ => {}
                 }

@@ -1,0 +1,191 @@
+   Compiling super-app v0.1.0 (/Users/pietroelaura/Desktop/superApp)
+error[E0433]: failed to resolve: use of undeclared type `DagPayload`
+    --> src/backend/mod.rs:2798:28
+     |
+2798 |                     if let DagPayload::Web(web) = &nodes[0].payload {
+     |                            ^^^^^^^^^^ use of undeclared type `DagPayload`
+     |
+help: consider importing this enum
+     |
+   7 + use crate::backend::dag::DagPayload;
+     |
+
+warning: unused import: `self`
+ --> src/backend/identity.rs:4:15
+  |
+4 | use std::io::{self, Write, Read};
+  |               ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `ResponseChannel`
+  --> src/backend/mod.rs:13:49
+   |
+13 |     request_response::{self, OutboundRequestId, ResponseChannel},
+   |                                                 ^^^^^^^^^^^^^^^
+
+warning: unused import: `Nonce`
+  --> src/backend/mod.rs:26:16
+   |
+26 |     Aes256Gcm, Nonce,
+   |                ^^^^^
+
+warning: unused import: `AppEvent`
+ --> src/components/home_page.rs:2:30
+  |
+2 | use crate::backend::{AppCmd, AppEvent};
+  |                              ^^^^^^^^
+
+warning: unused import: `DagNode`
+ --> src/components/home_page.rs:3:27
+  |
+3 | use crate::backend::dag::{DagNode, DagPayload, PostPayload};
+  |                           ^^^^^^^
+
+warning: unused import: `AppEvent`
+ --> src/components/browser_page.rs:2:30
+  |
+2 | use crate::backend::{AppCmd, AppEvent};
+  |                              ^^^^^^^^
+
+warning: unused import: `home_page::*`
+  --> src/components/mod.rs:11:9
+   |
+11 | pub use home_page::*;
+   |         ^^^^^^^^^^^^
+
+warning: unused import: `messaging_page::*`
+  --> src/components/mod.rs:12:9
+   |
+12 | pub use messaging_page::*;
+   |         ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `nav_bar::*`
+  --> src/components/mod.rs:13:9
+   |
+13 | pub use nav_bar::*;
+   |         ^^^^^^^^^^
+
+warning: unused import: `geohash_page::*`
+  --> src/components/mod.rs:14:9
+   |
+14 | pub use geohash_page::*;
+   |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `verification_page::*`
+  --> src/components/mod.rs:15:9
+   |
+15 | pub use verification_page::*;
+   |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `browser_page::*`
+  --> src/components/mod.rs:16:9
+   |
+16 | pub use browser_page::*;
+   |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `marketplace_page::*`
+  --> src/components/mod.rs:17:9
+   |
+17 | pub use marketplace_page::*;
+   |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `governance_page::*`
+  --> src/components/mod.rs:18:9
+   |
+18 | pub use governance_page::*;
+   |         ^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated struct `sha2::digest::generic_array::GenericArray`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:300:75
+    |
+300 | ...                   let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                 ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:712:73
+    |
+712 |                     let key = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes()));
+    |                                                                         ^^^^^^^^^^
+
+warning: unused variable: `peer`
+    --> src/backend/mod.rs:1848:56
+     |
+1848 |                     request_response::Event::Message { peer, message } => {
+     |                                                        ^^^^ help: try ignoring the field: `peer: _`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `request_id`
+    --> src/backend/mod.rs:1994:45
+     |
+1994 | ...   let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::LocalSearch(query.clone()));
+     |           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_id`
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:295:68
+    |
+295 |                         let key_array = aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret_bytes);
+    |                                                                    ^^^^^^^^^^
+
+warning: use of deprecated associated function `sha2::digest::generic_array::GenericArray::<T, N>::from_slice`: please upgrade to generic-array 1.x
+   --> src/backend/mod.rs:300:89
+    |
+300 | ...                   let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+    |                                                                               ^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/backend/wasm.rs:21:13
+   |
+21 |         let mut store_data = StoreData {
+   |             ----^^^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/backend/wasm.rs:131:13
+    |
+131 |         let mut store_data = StoreData {
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/backend/mod.rs:325:13
+    |
+325 |         let mut target_peers = connected_peers.clone();
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `cmd_tx_b`
+    --> src/backend/mod.rs:2162:14
+     |
+2162 |         let (cmd_tx_b, _cmd_rx_b) = mpsc::unbounded_channel();
+     |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cmd_tx_b`
+
+warning: unused variable: `cmd_tx_state`
+   --> src/components/profile_page.rs:405:73
+    |
+405 | ...                   let cmd_tx_state = cmd_tx.clone();
+    |                           ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cmd_tx_state`
+
+warning: unused variable: `cid_clone`
+   --> src/components/profile_page.rs:406:73
+    |
+406 | ...                   let cid_clone = cid.clone();
+    |                           ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cid_clone`
+
+warning: unused variable: `is_active`
+   --> src/components/profile_page.rs:407:73
+    |
+407 | ...                   let is_active = active_call_contract() == Some(cid.clone());
+    |                           ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_active`
+
+For more information about this error, try `rustc --explain E0433`.
+warning: `super-app` (bin "super-app" test) generated 27 warnings
+error: could not compile `super-app` (bin "super-app" test) due to 1 previous error; 27 warnings emitted

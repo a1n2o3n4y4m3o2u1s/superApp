@@ -36,8 +36,11 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
 
             let _ = cmd_tx_clone.send(AppCmd::FetchUbiTimer);
             let _ = cmd_tx_clone.send(AppCmd::FetchContracts);
+            let _ = cmd_tx_clone.send(AppCmd::FetchMyWebPages);
+            let _ = cmd_tx_clone.send(AppCmd::FetchReputation { peer_id: tid.clone() });
         } else {
-            let _ = cmd_tx_clone.send(AppCmd::FetchUserProfile { peer_id: tid });
+            let _ = cmd_tx_clone.send(AppCmd::FetchUserProfile { peer_id: tid.clone() });
+            let _ = cmd_tx_clone.send(AppCmd::FetchReputation { peer_id: tid });
         }
     });
 
@@ -193,8 +196,39 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                             }
                         }
                         div { class: "card",
-                            p { class: "label mb-2", "Peer ID" }
                             p { class: "font-mono text-sm break-all text-[var(--text-primary)]", "{target_id}" }
+                        }
+                    }
+
+                    // Reputation
+                    div { class: "panel",
+                        div { class: "panel-header",
+                            h2 { class: "panel-title", "Reputation" }
+                            if let Some(rep) = app_state.reputation.read().as_ref() {
+                                span { class: "badge badge-primary", "Score: {rep.score}" }
+                            }
+                        }
+                        if let Some(rep) = app_state.reputation.read().as_ref() {
+                            div { class: "grid grid-cols-2 gap-4",
+                                div { class: "card text-center p-2",
+                                    p { class: "text-xs text-[var(--text-secondary)]", "Verification" }
+                                    p { class: "text-lg font-bold", "{rep.breakdown.verification}" }
+                                }
+                                div { class: "card text-center p-2",
+                                    p { class: "text-xs text-[var(--text-secondary)]", "Content" }
+                                    p { class: "text-lg font-bold", "{rep.breakdown.content}" }
+                                }
+                                div { class: "card text-center p-2",
+                                    p { class: "text-xs text-[var(--text-secondary)]", "Governance" }
+                                    p { class: "text-lg font-bold", "{rep.breakdown.governance}" }
+                                }
+                                div { class: "card text-center p-2",
+                                    p { class: "text-xs text-[var(--text-secondary)]", "Storage" }
+                                    p { class: "text-lg font-bold", "{rep.breakdown.storage}" }
+                                }
+                            }
+                        } else {
+                            div { class: "empty-state py-4", "Loading reputation..." }
                         }
                     }
 
@@ -402,9 +436,9 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                                                                 }
                                                                 // Trigger fetch state when opened is handled by effect or logic
                                                                 {
-                                                                    let cmd_tx_state = cmd_tx.clone();
-                                                                    let cid_clone = cid.clone();
-                                                                    let is_active = active_call_contract() == Some(cid.clone());
+                                                                    let _cmd_tx_state = cmd_tx.clone();
+                                                                    let _cid_clone = cid.clone();
+                                                                    let _is_active = active_call_contract() == Some(cid.clone());
                                                                     
                                                                     // We can't use use_effect inside a loop easily without warnings, 
                                                                     // but we can just trigger it on click.
@@ -443,7 +477,41 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                             }
                         }
 
-                        // Storage Stats
+
+
+                        // SuperWeb Hosting
+                        div { class: "panel",
+                            div { class: "panel-header",
+                                h2 { class: "panel-title", "SuperWeb Hosting" }
+                            }
+                            {
+                                let pages = app_state.my_web_pages.read();
+                                if pages.is_empty() {
+                                    rsx! {
+                                        div { class: "empty-state py-6",
+                                            p { class: "empty-state-text", "No sites hosted" }
+                                            p { class: "text-xs text-[var(--text-muted)] mt-1", "Create sp:// sites to earn rewards" }
+                                        }
+                                    }
+                                } else {
+                                    rsx! {
+                                        div { class: "space-y-2",
+                                            for node in pages.iter() {
+                                                if let crate::backend::dag::DagPayload::Web(web) = &node.payload {
+                                                    div { class: "list-item",
+                                                        div { class: "list-item-content",
+                                                            p { class: "list-item-title", "{web.title}" }
+                                                            p { class: "list-item-subtitle font-mono", "{web.url}" }
+                                                        }
+                                                        // Could add 'Edit' or 'Analytics' button here later
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         div { class: "panel",
                             div { class: "panel-header",
                                 h2 { class: "panel-title", "Storage" }

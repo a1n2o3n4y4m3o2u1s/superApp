@@ -1,7 +1,7 @@
 use libp2p::identity::Keypair;
 use std::fs;
 use std::path::Path;
-use std::io::{self, Write, Read};
+use std::io::{Write, Read};
 
 pub fn load_identity(path: &Path) -> Result<Keypair, Box<dyn std::error::Error>> {
     if path.exists() {

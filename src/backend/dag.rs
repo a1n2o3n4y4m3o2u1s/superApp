@@ -16,6 +16,20 @@ pub struct DagNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReputationDetails {
+    pub score: u32,
+    pub breakdown: ReputationBreakdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReputationBreakdown {
+    pub verification: u32,
+    pub storage: u32,
+    pub content: u32,
+    pub governance: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum DagPayload {
     #[serde(rename = "profile:v1")]
@@ -26,6 +40,8 @@ pub enum DagPayload {
     Proof(ProofPayload),
     #[serde(rename = "message:v1")]
     Message(MessagePayload),
+    #[serde(rename = "group:v1")]
+    Group(GroupPayload),
     #[serde(rename = "token:v1")]
     Token(TokenPayload),
     #[serde(rename = "web:v1")]
@@ -40,6 +56,21 @@ pub enum DagPayload {
     Contract(ContractPayload),
     #[serde(rename = "contract_call:v1")]
     ContractCall(ContractCallPayload),
+    #[serde(rename = "proposal:v1")]
+    Proposal(ProposalPayload),
+    #[serde(rename = "vote:v1")]
+    Vote(VotePayload),
+    #[serde(rename = "candidacy:v1")]
+    Candidacy(CandidacyPayload),
+    #[serde(rename = "candidacy_vote:v1")]
+    CandidacyVote(CandidacyVotePayload),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GroupPayload {
+    pub name: String,
+    pub members: Vec<String>, // List of Peer IDs (hex pubkeys)
+    pub owner: String, // Founder of the group
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +109,7 @@ pub struct ListingPayload {
     pub price: u64, // SUPER tokens
     pub image_cid: Option<String>,
     pub status: ListingStatus,
+    pub ref_cid: Option<String>, // Reference to the original listing CID if this is an update
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -101,6 +133,58 @@ pub struct ContractCallPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProposalPayload {
+    pub title: String,
+    pub description: String,
+    pub r#type: ProposalType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Standard,
+    Constitutional,
+    Emergency,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VotePayload {
+    pub proposal_id: String,
+    pub vote: VoteType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum VoteType {
+    Yes,
+    No,
+    Abstain,
+    PetitionSignature,
+}
+
+/// The three initial ministries as defined in the governance plan
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Ministry {
+    /// Ministry of Verification & Identity - 3 positions, 6-month terms
+    VerificationAndIdentity,
+    /// Ministry of Treasury & Distribution - 3 positions, 6-month terms
+    TreasuryAndDistribution,
+    /// Ministry of Network & Protocols - 5 positions, 8-month terms
+    NetworkAndProtocols,
+}
+
+/// A verified user declaring candidacy for a ministry position
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CandidacyPayload {
+    pub ministry: Ministry,
+    pub platform: String, // Candidate's platform/statement
+}
+
+/// A vote for a specific candidate (identified by their candidacy node CID)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CandidacyVotePayload {
+    pub candidacy_id: String, // CID of the candidacy node
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProofPayload {
     pub target_pubkey: String, // Hex encoded public key of the person being verified
 }
@@ -111,6 +195,7 @@ pub struct MessagePayload {
     pub ciphertext: String, // Hex encoded encrypted content
     pub nonce: String, // Hex encoded nonce
     pub ephemeral_pubkey: String, // Hex encoded ephemeral public key of sender
+    pub group_id: Option<String>, // Optional: CID of the group if this is a group message
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
