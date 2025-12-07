@@ -18,7 +18,7 @@ impl WasmRuntime {
         params: &[u8],
         state: &HashMap<String, Vec<u8>>,
     ) -> Result<HashMap<String, Vec<u8>>, String> {
-        let mut store_data = StoreData {
+        let store_data = StoreData {
             state: state.clone(),
             params: params.to_vec(),
             result: Vec::new(),
@@ -128,7 +128,7 @@ impl WasmRuntime {
         params: &[u8],
         state: &HashMap<String, Vec<u8>>,
     ) -> Result<String, String> {
-        let mut store_data = StoreData {
+        let store_data = StoreData {
             state: state.clone(),
             params: params.to_vec(),
             result: Vec::new(),

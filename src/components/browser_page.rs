@@ -12,6 +12,7 @@ pub fn BrowserComponent() -> Element {
     let mut url_input = use_signal(|| "sp://".to_string());
     let mut is_loading = use_signal(|| false);
     let mut show_publish_form = use_signal(|| false);
+    let mut search_mode = use_signal(|| "web"); // "web" or "file"
     
     // Publish form state
     let mut publish_url = use_signal(|| "sp://".to_string());
@@ -31,7 +32,7 @@ pub fn BrowserComponent() -> Element {
 
     let nav_submit = nav.clone();
     let cmd_tx_submit = cmd_tx.clone();
-    let mut submit_action = move || {
+    let submit_action = move || {
         let input = url_input();
         is_loading.set(true);
         
@@ -64,7 +65,11 @@ pub fn BrowserComponent() -> Element {
                  }
         } else {
                  // Treat as search query
-                 let _ = cmd_tx_submit.send(AppCmd::SearchWeb { query: input.clone() });
+                 if search_mode() == "file" {
+                     let _ = cmd_tx_submit.send(AppCmd::SearchFiles { query: input.clone() });
+                 } else {
+                     let _ = cmd_tx_submit.send(AppCmd::SearchWeb { query: input.clone() });
+                 }
         }
     };
     
@@ -154,7 +159,20 @@ pub fn BrowserComponent() -> Element {
             }
 
             // Browser Bar
-            div { class: "flex gap-2 mb-6",
+            div { class: "flex flex-col gap-2 mb-6",
+                    div { class: "flex gap-2 mb-6 border-b border-[var(--border-subtle)] pb-2",
+                        div {
+                            class: if search_mode() == "web" { "nav-button active cursor-pointer" } else { "nav-button cursor-pointer" },
+                            onclick: move |_| search_mode.set("web"),
+                            "Web Search"
+                        }
+                        div {
+                            class: if search_mode() == "file" { "nav-button active cursor-pointer" } else { "nav-button cursor-pointer" },
+                            onclick: move |_| search_mode.set("file"),
+                            "File Search"
+                        }
+                    }
+            div { class: "flex gap-2",
                 input {
                     class: "input flex-1",
                     placeholder: "Enter URL (sp://) or search terms...",
@@ -177,6 +195,7 @@ pub fn BrowserComponent() -> Element {
                     },
                     if is_loading() { "Loading..." } else { "Go" }
                 }
+                }
             }
             
             // Main Content Area
@@ -194,9 +213,28 @@ pub fn BrowserComponent() -> Element {
                 }
 
                 // Rendered Content
-                if !app_state.web_search_results.read().is_empty() {
+                if search_mode() == "file" && !app_state.file_search_results.read().is_empty() {
                     div { class: "space-y-4",
-                        h3 { class: "text-lg font-bold mb-2", "Search Results" }
+                        h3 { class: "text-lg font-bold mb-2", "File Search Results" }
+                        for node in app_state.file_search_results.read().iter() {
+                             if let crate::backend::dag::DagPayload::File(file) = &node.payload {
+                                div { class: "card flex justify-between items-center p-4",
+                                    div {
+                                        h4 { class: "font-bold text-primary", "{file.name}" }
+                                        p { class: "text-sm text-[var(--text-secondary)]", "Type: {file.mime_type} • Size: {file.size} bytes" }
+                                    }
+                                    a {
+                                        class: "btn btn-sm btn-secondary opacity-50 cursor-not-allowed",
+                                        // href: "data:{file.mime_type};base64,{file.data}", // FilePayload separates data into blob
+                                        "Download (CID: {file.blob_cid})" // Show CID for now
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if search_mode() == "web" && !app_state.web_search_results.read().is_empty() {
+                    div { class: "space-y-4",
+                        h3 { class: "text-lg font-bold mb-2", "Web Search Results" }
                         for node in app_state.web_search_results.read().iter() {
                             if let crate::backend::dag::DagPayload::Web(web) = &node.payload {
                                 div { class: "card cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors",

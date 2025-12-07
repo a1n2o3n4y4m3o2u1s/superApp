@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::backend::{AppCmd, dag::{DagPayload, ProposalType, VoteType, Ministry}};
+use crate::backend::{AppCmd, dag::{DagPayload, ProposalType, VoteType}};
 use crate::components::AppState;
 
 #[component]
@@ -14,10 +14,17 @@ pub fn GovernanceComponent() -> Element {
     let mut title = use_signal(|| "".to_string());
     let mut description = use_signal(|| "".to_string());
     let mut proposal_type = use_signal(|| "Standard".to_string());
+    let mut tax_rate = use_signal(|| 0i64);
     
     // Form state for candidacy
     let mut selected_ministry = use_signal(|| "VerificationAndIdentity".to_string());
     let mut platform = use_signal(|| "".to_string());
+
+    // Form state for recall
+    let mut show_recall_modal = use_signal(|| false);
+    let mut recall_target = use_signal(|| "".to_string());
+    let mut recall_reason = use_signal(|| "".to_string());
+    let mut recall_ministry = use_signal(|| "VerificationAndIdentity".to_string());
 
     // Fetch data on mount
     let cmd_tx_effect = cmd_tx.clone();
@@ -25,6 +32,10 @@ pub fn GovernanceComponent() -> Element {
         let _ = cmd_tx_effect.send(AppCmd::FetchProposals);
         let _ = cmd_tx_effect.send(AppCmd::FetchCandidates);
         let _ = cmd_tx_effect.send(AppCmd::FetchReports);
+        let _ = cmd_tx_effect.send(AppCmd::FetchRecalls);
+        let _ = cmd_tx_effect.send(AppCmd::FetchOversightCases);
+        let _ = cmd_tx_effect.send(AppCmd::FetchJuryDuty);
+        let _ = cmd_tx_effect.send(AppCmd::FetchMinistries);
     });
 
     // Fetch tallies when proposals change
@@ -45,11 +56,21 @@ pub fn GovernanceComponent() -> Element {
         }
     });
 
+    // Fetch recall tallies when recalls change
+    let cmd_tx_recalls = cmd_tx.clone();
+    use_effect(move || {
+        let recalls = app_state.recalls.read();
+        for node in recalls.iter() {
+            let _ = cmd_tx_recalls.send(AppCmd::FetchRecallTally { recall_id: node.id.clone() });
+        }
+    });
+
     let cmd_tx_submit = cmd_tx.clone();
     let on_submit_proposal = move |_| {
         let p_type = match proposal_type().as_str() {
             "Constitutional" => ProposalType::Constitutional,
             "Emergency" => ProposalType::Emergency,
+            "SetTax" => ProposalType::SetTax(tax_rate() as u8),
             _ => ProposalType::Standard,
         };
 
@@ -66,11 +87,7 @@ pub fn GovernanceComponent() -> Element {
 
     let cmd_tx_candidacy = cmd_tx.clone();
     let on_submit_candidacy = move |_| {
-        let ministry = match selected_ministry().as_str() {
-            "TreasuryAndDistribution" => Ministry::TreasuryAndDistribution,
-            "NetworkAndProtocols" => Ministry::NetworkAndProtocols,
-            _ => Ministry::VerificationAndIdentity,
-        };
+        let ministry = selected_ministry();
 
         let _ = cmd_tx_candidacy.send(AppCmd::DeclareCandidacy {
             ministry,
@@ -79,6 +96,21 @@ pub fn GovernanceComponent() -> Element {
 
         platform.set("".to_string());
         show_candidacy_modal.set(false);
+    };
+
+    let cmd_tx_recall = cmd_tx.clone();
+    let on_submit_recall = move |_| {
+        let ministry = recall_ministry();
+
+        let _ = cmd_tx_recall.send(AppCmd::InitiateRecall {
+            target_official: recall_target(),
+            ministry,
+            reason: recall_reason(),
+        });
+
+        recall_target.set("".to_string());
+        recall_reason.set("".to_string());
+        show_recall_modal.set(false);
     };
 
     rsx! {
@@ -92,10 +124,20 @@ pub fn GovernanceComponent() -> Element {
                         p { class: "text-[var(--text-secondary)]", "Voice of the People: 1 Human = 1 Vote" }
                     }
                     div { class: "flex gap-2",
+                         Link {
+                            to: crate::Route::TransparencyComponent {},
+                            class: "btn btn-secondary",
+                            "👁️ Transparency"
+                        }
                         button {
                             class: "btn btn-secondary",
                             onclick: move |_: Event<MouseData>| show_candidacy_modal.set(true),
                             "🗳️ Run for Office"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            onclick: move |_: Event<MouseData>| show_recall_modal.set(true),
+                            "⚠️ Recall Official"
                         }
                         button {
                             class: "btn btn-primary",
@@ -117,6 +159,11 @@ pub fn GovernanceComponent() -> Element {
                     class: if active_tab() == "elections" { "btn btn-primary" } else { "btn btn-secondary" },
                     onclick: move |_| active_tab.set("elections".to_string()),
                     "🏛️ Elections"
+                }
+                button {
+                    class: if active_tab() == "recalls" { "btn btn-primary" } else { "btn btn-secondary" },
+                    onclick: move |_| active_tab.set("recalls".to_string()),
+                    "⚠️ Recalls"
                 }
                 button {
                     class: if active_tab() == "moderation" { "btn btn-primary" } else { "btn btn-secondary" },
@@ -146,19 +193,36 @@ pub fn GovernanceComponent() -> Element {
                                             let cmd_tx_vote = cmd_tx.clone();
                                             
                                             let tallies_map = app_state.proposal_tallies.read();
-                                            let (yes, no, abstain, petition, unique_voters) = tallies_map
+                                            let (yes, no, abstain, petition, unique_voters, status) = tallies_map
                                                 .get(&pid)
                                                 .cloned()
-                                                .unwrap_or((0, 0, 0, 0, 0));
+                                                .unwrap_or((0, 0, 0, 0, 0, "Unknown".to_string()));
                                             
                                             let author_short = &node.author[0..8];
-                                            let type_str = format!("{:?}", prop.r#type);
+                                            let type_str = match &prop.r#type {
+                                                ProposalType::SetTax(rate) => format!("Tax Rate: {}%", rate),
+                                                ProposalType::DefineMinistries(_) => "Define Ministries".to_string(),
+                                                ProposalType::Constitutional => "Constitutional".to_string(),
+                                                ProposalType::Emergency => "Emergency".to_string(),
+                                                ProposalType::Standard => "Standard".to_string(),
+                                            };
+                                            
+                                            let status_color = match status.as_str() {
+                                                "Passed" => "text-green-500",
+                                                "Rejected" | "Failed (No votes)" => "text-red-500",
+                                                s if s.starts_with("Voting") => "text-blue-500",
+                                                s if s.starts_with("Petitioning") => "text-yellow-500",
+                                                _ => "text-[var(--text-muted)]",
+                                            };
                                             
                                             rsx! {
                                                 div { key: "{pid}", class: "panel",
                                                     div { class: "flex justify-between items-start mb-4",
                                                         div {
-                                                            span { class: "px-2 py-0.5 rounded text-xs bg-[var(--bg-secondary)] mb-2 inline-block", "{type_str}" }
+                                                            div { class: "flex gap-2 items-center mb-2",
+                                                                span { class: "px-2 py-0.5 rounded text-xs bg-[var(--bg-secondary)]", "{type_str}" }
+                                                                span { class: "font-bold text-sm {status_color} border border-current px-2 py-0.5 rounded", "{status}" }
+                                                            }
                                                             h2 { class: "text-xl font-bold", "{prop.title}" }
                                                             p { class: "text-xs text-[var(--text-muted)] mt-1", "Proposed by {author_short}..." }
                                                         }
@@ -255,162 +319,56 @@ pub fn GovernanceComponent() -> Element {
             } else if active_tab() == "elections" {
                 // Elections Tab
                 div { class: "grid gap-6",
-                    // Ministry of Verification
-                    div { class: "panel",
-                        h2 { class: "text-xl font-bold mb-4", "🔐 Ministry of Verification & Identity" }
-                        p { class: "text-sm text-[var(--text-muted)] mb-4", "3 positions • 6-month terms" }
-                        {
-                            let candidates = app_state.candidates.read();
-                            let verification_candidates: Vec<_> = candidates.iter()
-                                .filter(|n| {
-                                    if let DagPayload::Candidacy(c) = &n.payload {
-                                        c.ministry == Ministry::VerificationAndIdentity
-                                    } else { false }
-                                }).collect();
-                            
-                            if verification_candidates.is_empty() {
-                                rsx! { p { class: "text-[var(--text-muted)]", "No candidates yet" } }
-                            } else {
-                                rsx! {
-                                    for node in verification_candidates {
-                                        if let DagPayload::Candidacy(c) = &node.payload {
-                                            {
-                                                let cid = node.id.clone();
-                                                let cmd_tx_cvote = cmd_tx.clone();
-                                                let tallies = app_state.candidate_tallies.read();
-                                                let votes = tallies.get(&cid).cloned().unwrap_or(0);
-                                                let author_short = &node.author[0..8];
-                                                rsx! {
-                                                    div { key: "{cid}", class: "flex items-center justify-between p-3 bg-[var(--bg-secondary)] rounded-lg mb-2",
-                                                        div {
-                                                            div { class: "font-bold", "{author_short}..." }
-                                                            div { class: "text-sm text-[var(--text-muted)]", "{c.platform}" }
-                                                        }
-                                                        div { class: "flex items-center gap-3",
-                                                            div { class: "text-lg font-bold", "🗳️ {votes}" }
-                                                            button {
-                                                                class: "btn btn-primary btn-sm",
-                                                                onclick: {
-                                                                    let cid = cid.clone();
-                                                                    let cmd_tx = cmd_tx_cvote.clone();
-                                                                    move |_| {
-                                                                        let _ = cmd_tx.send(AppCmd::VoteForCandidate { candidacy_id: cid.clone() });
-                                                                        let _ = cmd_tx.send(AppCmd::FetchCandidateTally { candidacy_id: cid.clone() });
+                    {
+                        let ministries_list = app_state.ministries.read();
+                        rsx! {
+                            for m_name in ministries_list.iter() {
+                                div { class: "panel",
+                                    h2 { class: "text-xl font-bold mb-4", "🏛️ Ministry of {m_name}" }
+                                    {
+                                        let candidates = app_state.candidates.read();
+                                        let current_ministry_name = m_name.clone();
+                                        let section_candidates: Vec<_> = candidates.iter()
+                                            .filter(|n| {
+                                                if let DagPayload::Candidacy(c) = &n.payload {
+                                                    c.ministry == current_ministry_name
+                                                } else { false }
+                                            }).collect();
+                                        
+                                        if section_candidates.is_empty() {
+                                            rsx! { p { class: "text-[var(--text-muted)]", "No candidates yet" } }
+                                        } else {
+                                            rsx! {
+                                                for node in section_candidates {
+                                                    if let DagPayload::Candidacy(c) = &node.payload {
+                                                        {
+                                                            let cid = node.id.clone();
+                                                            let cmd_tx_cvote = cmd_tx.clone();
+                                                            let tallies = app_state.candidate_tallies.read();
+                                                            let votes = tallies.get(&cid).cloned().unwrap_or(0);
+                                                            let author_short = &node.author[0..8];
+                                                            rsx! {
+                                                                div { key: "{cid}", class: "flex items-center justify-between p-3 bg-[var(--bg-secondary)] rounded-lg mb-2",
+                                                                    div {
+                                                                        div { class: "font-bold", "{author_short}..." }
+                                                                        div { class: "text-sm text-[var(--text-muted)]", "{c.platform}" }
                                                                     }
-                                                                },
-                                                                "Vote"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Ministry of Treasury
-                    div { class: "panel",
-                        h2 { class: "text-xl font-bold mb-4", "💰 Ministry of Treasury & Distribution" }
-                        p { class: "text-sm text-[var(--text-muted)] mb-4", "3 positions • 6-month terms" }
-                        {
-                            let candidates = app_state.candidates.read();
-                            let treasury_candidates: Vec<_> = candidates.iter()
-                                .filter(|n| {
-                                    if let DagPayload::Candidacy(c) = &n.payload {
-                                        c.ministry == Ministry::TreasuryAndDistribution
-                                    } else { false }
-                                }).collect();
-                            
-                            if treasury_candidates.is_empty() {
-                                rsx! { p { class: "text-[var(--text-muted)]", "No candidates yet" } }
-                            } else {
-                                rsx! {
-                                    for node in treasury_candidates {
-                                        if let DagPayload::Candidacy(c) = &node.payload {
-                                            {
-                                                let cid = node.id.clone();
-                                                let cmd_tx_cvote = cmd_tx.clone();
-                                                let tallies = app_state.candidate_tallies.read();
-                                                let votes = tallies.get(&cid).cloned().unwrap_or(0);
-                                                let author_short = &node.author[0..8];
-                                                rsx! {
-                                                    div { key: "{cid}", class: "flex items-center justify-between p-3 bg-[var(--bg-secondary)] rounded-lg mb-2",
-                                                        div {
-                                                            div { class: "font-bold", "{author_short}..." }
-                                                            div { class: "text-sm text-[var(--text-muted)]", "{c.platform}" }
-                                                        }
-                                                        div { class: "flex items-center gap-3",
-                                                            div { class: "text-lg font-bold", "🗳️ {votes}" }
-                                                            button {
-                                                                class: "btn btn-primary btn-sm",
-                                                                onclick: {
-                                                                    let cid = cid.clone();
-                                                                    let cmd_tx = cmd_tx_cvote.clone();
-                                                                    move |_| {
-                                                                        let _ = cmd_tx.send(AppCmd::VoteForCandidate { candidacy_id: cid.clone() });
-                                                                        let _ = cmd_tx.send(AppCmd::FetchCandidateTally { candidacy_id: cid.clone() });
+                                                                    div { class: "flex items-center gap-3",
+                                                                        div { class: "text-lg font-bold", "🗳️ {votes}" }
+                                                                        button {
+                                                                            class: "btn btn-primary btn-sm",
+                                                                            onclick: {
+                                                                                let cid = cid.clone();
+                                                                                let cmd_tx = cmd_tx_cvote.clone();
+                                                                                move |_| {
+                                                                                    let _ = cmd_tx.send(AppCmd::VoteForCandidate { candidacy_id: cid.clone() });
+                                                                                    let _ = cmd_tx.send(AppCmd::FetchCandidateTally { candidacy_id: cid.clone() });
+                                                                                }
+                                                                            },
+                                                                            "Vote"
+                                                                        }
                                                                     }
-                                                                },
-                                                                "Vote"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Ministry of Network
-                    div { class: "panel",
-                        h2 { class: "text-xl font-bold mb-4", "🌐 Ministry of Network & Protocols" }
-                        p { class: "text-sm text-[var(--text-muted)] mb-4", "5 positions • 8-month terms" }
-                        {
-                            let candidates = app_state.candidates.read();
-                            let network_candidates: Vec<_> = candidates.iter()
-                                .filter(|n| {
-                                    if let DagPayload::Candidacy(c) = &n.payload {
-                                        c.ministry == Ministry::NetworkAndProtocols
-                                    } else { false }
-                                }).collect();
-                            
-                            if network_candidates.is_empty() {
-                                rsx! { p { class: "text-[var(--text-muted)]", "No candidates yet" } }
-                            } else {
-                                rsx! {
-                                    for node in network_candidates {
-                                        if let DagPayload::Candidacy(c) = &node.payload {
-                                            {
-                                                let cid = node.id.clone();
-                                                let cmd_tx_cvote = cmd_tx.clone();
-                                                let tallies = app_state.candidate_tallies.read();
-                                                let votes = tallies.get(&cid).cloned().unwrap_or(0);
-                                                let author_short = &node.author[0..8];
-                                                rsx! {
-                                                    div { key: "{cid}", class: "flex items-center justify-between p-3 bg-[var(--bg-secondary)] rounded-lg mb-2",
-                                                        div {
-                                                            div { class: "font-bold", "{author_short}..." }
-                                                            div { class: "text-sm text-[var(--text-muted)]", "{c.platform}" }
-                                                        }
-                                                        div { class: "flex items-center gap-3",
-                                                            div { class: "text-lg font-bold", "🗳️ {votes}" }
-                                                            button {
-                                                                class: "btn btn-primary btn-sm",
-                                                                onclick: {
-                                                                    let cid = cid.clone();
-                                                                    let cmd_tx = cmd_tx_cvote.clone();
-                                                                    move |_| {
-                                                                        let _ = cmd_tx.send(AppCmd::VoteForCandidate { candidacy_id: cid.clone() });
-                                                                        let _ = cmd_tx.send(AppCmd::FetchCandidateTally { candidacy_id: cid.clone() });
-                                                                    }
-                                                                },
-                                                                "Vote"
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -423,6 +381,93 @@ pub fn GovernanceComponent() -> Element {
                         }
                     }
                 }
+            } else if active_tab() == "recalls" {
+                // Recalls Tab
+                div { class: "grid gap-6",
+                    div { class: "panel", 
+                         h2 { class: "text-xl font-bold mb-4", "⚠️ Active Recall Campaigns" }
+                         p { class: "text-[var(--text-secondary)] mb-6", "Citizens have the power to recall officials who fail in their duties. A recall requires a majority vote to pass." }
+
+                         {
+                             let recalls = app_state.recalls.read();
+                             if recalls.is_empty() {
+                                 rsx! { p { class: "text-[var(--text-muted)]", "No active recall campaigns." } }
+                             } else {
+                                 rsx! {
+                                     for node in recalls.iter() {
+                                         if let DagPayload::Recall(r) = &node.payload {
+                                             {
+                                                 let rid = node.id.clone();
+                                                 let cmd_tx_rvote = cmd_tx.clone();
+                                                 let tallies = app_state.recall_tallies.read();
+                                                 let (remove, keep, unique) = tallies.get(&rid).cloned().unwrap_or((0, 0, 0));
+                                                 let author_short = &node.author[0..8];
+                                                 let target_short = &r.target_official[0..8];
+                                                 
+                                                 rsx! {
+                                                     div { key: "{rid}", class: "panel border border-red-900/30 mb-4",
+                                                         div { class: "flex justify-between items-start mb-2",
+                                                             div {
+                                                                 h3 { class: "font-bold text-lg text-red-400", "Recall: {target_short}..." }
+                                                                 p { class: "text-xs text-[var(--text-muted)]", "Ministry: {r.ministry:?}" }
+                                                                 p { class: "text-xs text-[var(--text-muted)]", "Initiated by {author_short}..." }
+                                                             }
+                                                             div { class: "text-right",
+                                                                 div { class: "text-sm font-bold", "👥 {unique} voters" }
+                                                             }
+                                                         }
+                                                         
+                                                         p { class: "text-[var(--text-secondary)] mb-4 italic", "\"{r.reason}\"" }
+                                                         
+                                                         div { class: "grid grid-cols-2 gap-4 mb-4",
+                                                            div { class: "p-2 rounded bg-red-900/20 text-center",
+                                                                div { class: "text-xl font-bold text-red-500", "{remove}" }
+                                                                div { class: "text-xs uppercase", "Remove" }
+                                                            }
+                                                            div { class: "p-2 rounded bg-green-900/20 text-center",
+                                                                div { class: "text-xl font-bold text-green-500", "{keep}" }
+                                                                div { class: "text-xs uppercase", "Keep" }
+                                                            }
+                                                         }
+                                                         
+                                                         div { class: "flex gap-2",
+                                                             button {
+                                                                 class: "btn flex-1 bg-red-600 hover:bg-red-700 text-white",
+                                                                 onclick: {
+                                                                     let rid = rid.clone();
+                                                                     let cmd_tx = cmd_tx_rvote.clone();
+                                                                     move |_| {
+                                                                         let _ = cmd_tx.send(AppCmd::VoteRecall { recall_id: rid.clone(), vote: true });
+                                                                         let _ = cmd_tx.send(AppCmd::FetchRecallTally { recall_id: rid.clone() });
+                                                                     }
+                                                                 },
+                                                                 "🔥 Vote to Remove"
+                                                             }
+                                                             button {
+                                                                 class: "btn flex-1 bg-green-600 hover:bg-green-700 text-white",
+                                                                 onclick: {
+                                                                     let rid = rid.clone();
+                                                                     let cmd_tx = cmd_tx_rvote.clone();
+                                                                     move |_| {
+                                                                         let _ = cmd_tx.send(AppCmd::VoteRecall { recall_id: rid.clone(), vote: false });
+                                                                         let _ = cmd_tx.send(AppCmd::FetchRecallTally { recall_id: rid.clone() });
+                                                                     }
+                                                                 },
+                                                                 "🛡️ Vote to Keep"
+                                                             }
+                                                         }
+                                                     }
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+                    }
+                }
+
+
             } else {
                 // Moderation Tab
                 div { class: "grid gap-6",
@@ -430,6 +475,61 @@ pub fn GovernanceComponent() -> Element {
                         h2 { class: "text-xl font-bold mb-4", "🚨 Decentralized Moderation Reports" }
                         p { class: "text-[var(--text-secondary)] mb-6", "Review reports submitted by the community. As a verified citizen, your vigilance helps keep the network safe." }
                         
+                        {
+                            let jury_duty = app_state.jury_duty.read();
+                            if !jury_duty.is_empty() {
+                                rsx! {
+                                    div { class: "mb-8 p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-lg",
+                                        h3 { class: "font-bold text-yellow-400 mb-2", "⚖️ Jury Duty Assigned" }
+                                        p { class: "text-sm text-[var(--text-muted)] mb-4", "You have been selected to serve on the following oversight cases." }
+                                        for node in jury_duty.iter() {
+                                            if let DagPayload::OversightCase(c) = &node.payload {
+                                                {
+                                                    let cid = c.case_id.clone();
+                                                    let short_cid = if cid.len() > 8 { cid[0..8].to_string() } else { cid.clone() };
+                                                    let display_cid = format!("Case #{}...", short_cid);
+                                                    let cmd_tx_vote = cmd_tx.clone();
+                                                    rsx! {
+                                                        div { key: "{cid}", class: "bg-[var(--bg-secondary)] p-3 rounded mb-2",
+                                                            div { class: "flex justify-between items-center",
+                                                                span { "{display_cid}" }
+                                                                div { class: "flex gap-2",
+                                                                    button {
+                                                                        class: "btn btn-sm bg-red-600 hover:bg-red-700 text-white",
+                                                                        onclick: {
+                                                                            let cid = cid.clone();
+                                                                            let cmd_tx = cmd_tx_vote.clone();
+                                                                            move |_| {
+                                                                                let _ = cmd_tx.send(AppCmd::CastJuryVote { case_id: cid.clone(), vote: "Uphold".to_string() });
+                                                                            }
+                                                                        },
+                                                                        "🔨 Uphold (Ban)"
+                                                                    }
+                                                                    button {
+                                                                        class: "btn btn-sm bg-green-600 hover:bg-green-700 text-white",
+                                                                        onclick: {
+                                                                            let cid = cid.clone();
+                                                                            let cmd_tx = cmd_tx_vote.clone();
+                                                                            move |_| {
+                                                                                let _ = cmd_tx.send(AppCmd::CastJuryVote { case_id: cid.clone(), vote: "Dismiss".to_string() });
+                                                                            }
+                                                                        },
+                                                                        "Dismiss"
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                rsx! {}
+                            }
+                        }
+
                         {
                             let reports = app_state.reports.read();
                             if reports.is_empty() {
@@ -452,7 +552,17 @@ pub fn GovernanceComponent() -> Element {
                                                                 div { class: "font-mono text-sm bg-[var(--bg-default)] p-1 rounded inline-block mb-2", "{r.target_id}" }
                                                                 p { class: "text-sm text-[var(--text-secondary)]", "{r.details}" }
                                                             }
-                                                            // Future: Action buttons (Ignore, Uphold, etc.)
+                                                            button {
+                                                                class: "btn btn-sm btn-secondary",
+                                                                onclick: {
+                                                                    let rid = rid.clone();
+                                                                    let cmd_tx = cmd_tx.clone();
+                                                                    move |_| {
+                                                                        let _ = cmd_tx.send(AppCmd::EscalateReport { report_id: rid.clone() });
+                                                                    }
+                                                                },
+                                                                "⚖️ Escalate to Jury"
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -473,24 +583,46 @@ pub fn GovernanceComponent() -> Element {
                         div { class: "flex justify-between items-center mb-6",
                             h2 { class: "text-xl font-bold", "Draft New Proposal" }
                             button { 
-                                class: "text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+                                class: "w-8 h-8 rounded-full bg-[var(--bg-secondary)] hover:bg-red-500/20 flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors text-lg font-bold",
                                 onclick: move |_| show_create_modal.set(false),
-                                "✕"
+                                "×"
                             }
                         }
                         
                         div { class: "grid gap-4",
-                            div { class: "form-group",
-                                label { class: "form-label", "Proposal Type" }
-                                select { 
-                                    class: "input",
-                                    value: "{proposal_type}",
-                                    onchange: move |e| proposal_type.set(e.value()),
-                                    option { value: "Standard", "Standard (Simple Majority)" }
-                                    option { value: "Constitutional", "Constitutional (Supermajority)" }
-                                    option { value: "Emergency", "Emergency (Fast Track)" }
+                                div { class: "mb-4",
+                                    label { class: "block text-sm font-medium mb-1", "Type" }
+                                    select {
+                                        class: "w-full p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-color)]",
+                                        value: "{proposal_type}",
+                                        oninput: move |e| proposal_type.set(e.value()),
+                                        option { value: "Standard", "Standard (1 week, 50%)" }
+                                        option { value: "Constitutional", "Constitutional (1 week, 66%)" }
+                                        option { value: "Emergency", "Emergency (48h, 50%, 5% Threshold)" }
+                                        option { value: "SetTax", "Set System Tax Rate" }
+                                    }
                                 }
-                            }
+                                
+                                {
+                                    if proposal_type() == "SetTax" {
+                                        rsx! {
+                                             div { class: "mb-4",
+                                                label { class: "block text-sm font-medium mb-1", "Tax Rate (%)" }
+                                                input {
+                                                    class: "w-full",
+                                                    r#type: "range",
+                                                    min: "0",
+                                                    max: "100",
+                                                    value: "{tax_rate}",
+                                                    oninput: move |e| tax_rate.set(e.value().parse().unwrap_or(0)),
+                                                }
+                                                div { class: "text-right font-bold text-lg", "{tax_rate}%" }
+                                             }
+                                        }
+                                    } else {
+                                        rsx!({})
+                                    }
+                                }
 
                             div { class: "form-group",
                                 label { class: "form-label", "Title" }
@@ -536,9 +668,9 @@ pub fn GovernanceComponent() -> Element {
                         div { class: "flex justify-between items-center mb-6",
                             h2 { class: "text-xl font-bold", "🗳️ Run for Office" }
                             button { 
-                                class: "text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+                                class: "w-8 h-8 rounded-full bg-[var(--bg-secondary)] hover:bg-red-500/20 flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors text-lg font-bold",
                                 onclick: move |_| show_candidacy_modal.set(false),
-                                "✕"
+                                "×"
                             }
                         }
                         
@@ -549,9 +681,14 @@ pub fn GovernanceComponent() -> Element {
                                     class: "input",
                                     value: "{selected_ministry}",
                                     onchange: move |e| selected_ministry.set(e.value()),
-                                    option { value: "VerificationAndIdentity", "🔐 Verification & Identity (3 seats)" }
-                                    option { value: "TreasuryAndDistribution", "💰 Treasury & Distribution (3 seats)" }
-                                    option { value: "NetworkAndProtocols", "🌐 Network & Protocols (5 seats)" }
+                                    {
+                                        let ministries_list = app_state.ministries.read();
+                                        rsx! {
+                                            for m in ministries_list.iter() {
+                                                option { value: "{m}", "{m}" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -581,6 +718,78 @@ pub fn GovernanceComponent() -> Element {
                     }
                 }
             }
-        }
+
+            // Initiate Recall Modal
+            if show_recall_modal() {
+                div { class: "fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4",
+                    div { class: "panel w-full max-w-lg max-h-[90vh] overflow-y-auto border-red-500/30",
+                        div { class: "flex justify-between items-center mb-6",
+                            h2 { class: "text-xl font-bold text-red-400", "⚠️ Initiate Recall" }
+                            button { 
+                                class: "w-8 h-8 rounded-full bg-[var(--bg-secondary)] hover:bg-red-500/20 flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors text-lg font-bold",
+                                onclick: move |_| show_recall_modal.set(false),
+                                "×"
+                            }
+                        }
+                        
+                        div { class: "grid gap-4",
+                            div { class: "bg-red-900/20 p-4 rounded text-sm text-red-300 mb-2",
+                                "Warning: Initiating a recall is a serious action. Frivolous recalls may negatively impact your reputation."
+                            }
+
+                            div { class: "form-group",
+                                label { class: "form-label", "Target Official (Public Key)" }
+                                input {
+                                    class: "input",
+                                    value: "{recall_target}",
+                                    oninput: move |e| recall_target.set(e.value()),
+                                    placeholder: "Hex public key of the official..."
+                                }
+                            }
+
+                            div { class: "form-group",
+                                label { class: "form-label", "Ministry" }
+                                select { 
+                                    class: "input",
+                                    value: "{recall_ministry}",
+                                    onchange: move |e| recall_ministry.set(e.value()),
+                                    {
+                                        let ministries_list = app_state.ministries.read();
+                                        rsx! {
+                                            for m in ministries_list.iter() {
+                                                option { value: "{m}", "{m}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            div { class: "form-group",
+                                label { class: "form-label", "Reason for Recall" }
+                                textarea {
+                                    class: "input min-h-[100px]",
+                                    value: "{recall_reason}",
+                                    oninput: move |e| recall_reason.set(e.value()),
+                                    placeholder: "Explain why this official should be removed..."
+                                }
+                            }
+
+                            div { class: "flex justify-end gap-3 mt-4",
+                                button {
+                                    class: "btn btn-secondary",
+                                    onclick: move |_| show_recall_modal.set(false),
+                                    "Cancel"
+                                }
+                                button {
+                                    class: "btn bg-red-600 hover:bg-red-700 text-white",
+                                    onclick: on_submit_recall,
+                                    "🔥 Initiate Recall"
+                                }
+                            }
+                        }
+                    }
+                }
     }
+}
+}
 }

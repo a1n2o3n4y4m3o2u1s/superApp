@@ -1,22 +1,40 @@
 use dioxus::prelude::*;
 use crate::backend::AppCmd;
-use crate::backend::dag::{DagPayload, PostPayload};
+use crate::backend::dag::{DagPayload, PostPayload, DagNode};
 use base64::{Engine as _, engine::general_purpose};
 
 #[component]
 pub fn HomeComponent() -> Element {
     let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
     let app_state = use_context::<crate::components::AppState>();
-    let posts = app_state.posts;
+    let app_state = use_context::<crate::components::AppState>();
+    
+    let mut active_feed_tab = use_signal(|| "global".to_string());
+    
+    let posts = if active_feed_tab() == "following" {
+        app_state.following_posts
+    } else {
+        app_state.posts
+    };
     
     let mut new_post_content = use_signal(|| "".to_string());
     let mut attached_cids = use_signal(|| Vec::<String>::new());
     
     let mut last_processed_blob = use_signal(|| None::<String>);
-    use_effect(move || {
+    let is_uploading_story = use_signal(|| false);
+    
+    // Stories state
+    let users_stories = app_state.stories;
+    let mut viewed_story = use_signal(|| None::<DagNode>);
+    let mut seen_stories = app_state.seen_stories;
+    let user_profiles = app_state.user_profiles;
+    
+     use_effect(move || {
         if let Some(blob_id) = app_state.last_created_blob.read().clone() {
             if last_processed_blob() != Some(blob_id.clone()) {
-                 attached_cids.write().push(blob_id.clone());
+                 if !is_uploading_story() {
+                     attached_cids.write().push(blob_id.clone());
+                 }
                  last_processed_blob.set(Some(blob_id));
             }
         }
@@ -25,6 +43,17 @@ pub fn HomeComponent() -> Element {
     let cmd_tx_clone = cmd_tx.clone();
     use_effect(move || {
         let _ = cmd_tx_clone.send(AppCmd::FetchPosts);
+        let _ = cmd_tx_clone.send(AppCmd::FetchStories);
+        let _ = cmd_tx_clone.send(AppCmd::FetchFollowingPosts);
+    });
+
+    let cmd_tx_feed = cmd_tx.clone();
+    use_effect(move || {
+        if active_feed_tab() == "following" {
+            let _ = cmd_tx_feed.send(AppCmd::FetchFollowingPosts);
+        } else {
+            let _ = cmd_tx_feed.send(AppCmd::FetchPosts);
+        }
     });
 
     let on_submit = {
@@ -54,26 +83,11 @@ pub fn HomeComponent() -> Element {
             spawn(async move {
                 for file_data in files {
                     let file_name = file_data.name();
+                    let mime_type = file_data.content_type().unwrap_or_else(|| "image/jpeg".to_string());
                     
-                    // Get MIME type from file or determine from extension
-                    let mime_type = file_data.content_type().unwrap_or_else(|| {
-                        if file_name.to_lowercase().ends_with(".png") {
-                            "image/png".to_string()
-                        } else if file_name.to_lowercase().ends_with(".gif") {
-                            "image/gif".to_string()
-                        } else if file_name.to_lowercase().ends_with(".webp") {
-                            "image/webp".to_string()
-                        } else {
-                            "image/jpeg".to_string() // Default to JPEG for other images
-                        }
-                    });
-                    
-                    // Read file bytes
                     if let Ok(file_bytes) = file_data.read_bytes().await {
-                        // Encode file data as base64
                         let data = general_purpose::STANDARD.encode(&file_bytes);
-                        
-                        // Send to backend
+                        // Just publish blob normally for posts
                         if let Err(e) = cmd_tx.send(AppCmd::PublishBlob { mime_type, data }) {
                             eprintln!("Failed to send PublishBlob command: {:?}", e);
                         }
@@ -82,10 +96,165 @@ pub fn HomeComponent() -> Element {
             });
         }
     };
+    
+    let upload_story = {
+        let cmd_tx = cmd_tx.clone();
+        move |evt: Event<FormData>| {
+            let cmd_tx = cmd_tx.clone();
+            let files: Vec<_> = evt.files().into_iter().collect();
+            spawn(async move {
+                for file_data in files {
+                    let mime_type = file_data.content_type().unwrap_or_else(|| "image/jpeg".to_string());
+                    if let Ok(file_bytes) = file_data.read_bytes().await {
+                        let data = general_purpose::STANDARD.encode(&file_bytes);
+                        
+                         // 1. Publish Blob
+                         if let Err(e) = cmd_tx.send(AppCmd::PublishBlob { mime_type, data }) {
+                             eprintln!("Failed to send PublishBlob command: {:?}", e);
+                         }
+                    }
+                }
+            });
+        }
+    };
+    
+    let mut is_uploading_story = use_signal(|| false);
+
+    let cmd_tx_story = cmd_tx.clone();
+    use_effect(move || {
+        if let Some(blob_id) = app_state.last_created_blob.read().clone() {
+            if last_processed_blob() != Some(blob_id.clone()) {
+                 if is_uploading_story() {
+                     // Publish Story
+                     let cmd = AppCmd::PublishStory {
+                         media_cid: blob_id.clone(),
+                         caption: "".to_string(),
+                         geohash: None,
+                     };
+                     let _ = cmd_tx_story.send(cmd);
+                     let _ = cmd_tx_story.send(AppCmd::FetchStories);
+                     is_uploading_story.set(false);
+                 } else {
+                     // Append to post
+                     attached_cids.write().push(blob_id.clone());
+                 }
+                 last_processed_blob.set(Some(blob_id));
+            }
+        }
+    });
+
+    let following = app_state.following;
+    let local_peer_id_val = app_state.local_peer_id.read().clone();
 
     rsx! {
         div { class: "page-container py-8 animate-fade-in",
             
+            // Stories Bar
+            div { class: "mb-8 overflow-x-auto whitespace-nowrap pb-4 scrollbar-hide",
+                div { class: "flex gap-4",
+                    // Add Story Button
+                    div { class: "inline-block relative",
+                         div { class: "w-16 h-16 rounded-full bg-[var(--bg-secondary)] border-2 border-[var(--primary)] flex items-center justify-center cursor-pointer hover:bg-[var(--bg-hover)] transition-colors",
+                            if is_uploading_story() {
+                                div { class: "w-6 h-6 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" }
+                            } else {
+                                span { class: "text-2xl font-bold text-[var(--primary)]", "+" }
+                            }
+                            input {
+                                class: "absolute inset-0 w-full h-full opacity-0 cursor-pointer",
+                                r#type: "file",
+                                accept: "image/*,video/*",
+                                disabled: is_uploading_story(),
+                                onchange: move |e| {
+                                    is_uploading_story.set(true);
+                                    upload_story(e);
+                                }
+                            }
+                         }
+                         div { class: "text-xs text-center mt-1 truncate w-16", if is_uploading_story() { "..." } else { "You" } }
+                    }
+                    
+                    // Stories List
+                    for node in users_stories() {
+                        if let DagPayload::Story(story) = &node.payload {
+                            // Filter: Only show if following or self
+                            if node.author == local_peer_id_val || following.read().contains(&node.author) {
+                                {
+                                    let is_seen = seen_stories.read().contains(&node.id);
+                                    let ring_class = if is_seen {
+                                        "bg-gray-700"
+                                    } else {
+                                        "bg-gradient-to-tr from-yellow-400 to-fuchsia-600"
+                                    };
+
+                                    rsx! {
+                                        div { 
+                                            class: "inline-block cursor-pointer",
+                                            onclick: move |_| {
+                                                seen_stories.write().insert(node.id.clone());
+                                                viewed_story.set(Some(node.clone()));
+                                            },
+                                            div { class: "w-16 h-16 rounded-full p-[2px] {ring_class}",
+                                                div { class: "w-full h-full rounded-full border-2 border-[var(--bg-default)] overflow-hidden bg-[var(--bg-secondary)]",
+                                                    // We show the image as thumbnail
+                                                    BlobImage { cid: story.media_cid.clone() }
+                                                }
+                                            }
+                                            div { class: "text-xs text-center mt-1 truncate w-16", "{node.author.get(0..4).unwrap_or(\"??\")}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Story Viewer Modal
+            if let Some(node) = viewed_story() {
+                if let DagPayload::Story(story) = node.payload {
+                    div { class: "fixed inset-0 z-50 bg-black flex items-center justify-center",
+                        onclick: move |_| viewed_story.set(None),
+                        div { class: "relative max-w-lg w-full h-full max-h-[90vh] flex flex-col",
+                            div { class: "absolute top-4 left-4 z-10 flex items-center gap-2",
+                                div { class: "w-8 h-8 rounded-full bg-gray-500 overflow-hidden flex items-center justify-center",
+                                     if let Some(profile) = user_profiles.read().get(&node.author) {
+                                         if let Some(photo) = &profile.photo {
+                                             BlobImage { cid: photo.clone() }
+                                         } else {
+                                             "{node.author.get(0..2).unwrap_or(\"??\")}"
+                                         }
+                                    } else {
+                                         "{node.author.get(0..2).unwrap_or(\"??\")}"
+                                     }
+                                }
+                                span { class: "text-white font-bold drop-shadow-md", "{node.author.get(0..8).unwrap_or(\"??\")}" }
+                                {
+                                    let time_str = node.timestamp.format("%H:%M").to_string();
+                                    rsx! { span { class: "text-white/70 text-sm drop-shadow-md", "{time_str}" } }
+                                }
+                            }
+                            
+                            div { class: "flex-1 flex items-center justify-center overflow-hidden",
+                                BlobImage { cid: story.media_cid.clone() }
+                            }
+                            
+                            if !story.caption.is_empty() {
+                                div { class: "absolute bottom-10 left-0 right-0 p-4 text-center text-white bg-gradient-to-t from-black/80 to-transparent",
+                                    "{story.caption}"
+                                }
+                            }
+                            
+                            button {
+                                class: "absolute top-4 right-4 text-white text-3xl font-bold opacity-70 hover:opacity-100",
+                                onclick: move |_| viewed_story.set(None),
+                                "×"
+                            }
+                        }
+                    }
+                }
+            }
+
             // Compose area
             div { class: "panel mb-8",
                 div { class: "panel-header",
@@ -141,6 +310,19 @@ pub fn HomeComponent() -> Element {
 
             // Feed
             div { class: "panel",
+                div { class: "panel-header flex gap-4",
+                    button { 
+                        class: if active_feed_tab() == "global" { "btn btn-sm btn-primary" } else { "btn btn-sm btn-ghost" },
+                        onclick: move |_| active_feed_tab.set("global".to_string()),
+                        "Global"
+                    }
+                    button { 
+                        class: if active_feed_tab() == "following" { "btn btn-sm btn-primary" } else { "btn btn-sm btn-ghost" },
+                        onclick: move |_| active_feed_tab.set("following".to_string()),
+                        "Following"
+                    }
+                }
+                
                 if posts().is_empty() {
                     div { class: "empty-state",
                         div { class: "empty-state-icon", "📝" }
@@ -150,31 +332,133 @@ pub fn HomeComponent() -> Element {
                 } else {
                     for node in posts() {
                         if let DagPayload::Post(PostPayload { content, attachments, .. }) = &node.payload {
-                            div { 
-                                class: "post",
-                                key: "{node.id}",
+                            {
+                                let post_id = node.id.clone();
+                                let app_state = app_state.clone();
+                                let cmd_tx = cmd_tx.clone();
                                 
-                                div { class: "post-header",
-                                    div { class: "avatar",
-                                        "{node.author.get(0..2).unwrap_or(\"??\")}"
+                                let mut show_reply = use_signal(|| false);
+                                let mut reply_content = use_signal(|| "".to_string());
+                                
+                                // Get comments
+                                let comments_map = app_state.comments.read();
+                                let comments = comments_map.get(&post_id).cloned().unwrap_or_default();
+                                let comment_count = comments.len();
+                                drop(comments_map);
+                                
+                                // Get likes
+                                let likes_map = app_state.likes.read();
+                                let (like_count, is_liked_by_me) = likes_map.get(&post_id).cloned().unwrap_or((0, false));
+                                drop(likes_map);
+                                
+                                // Fetch on mount
+                                use_effect({
+                                    let cmd_tx = cmd_tx.clone();
+                                    let pid = post_id.clone();
+                                    move || {
+                                        let _ = cmd_tx.send(AppCmd::FetchComments { parent_id: pid.clone() });
+                                        let _ = cmd_tx.send(AppCmd::FetchLikes { target_id: pid.clone() });
                                     }
-                                    div { class: "flex-1",
-                                        Link {
-                                            to: crate::Route::UserProfileComponent { peer_id: node.author.clone() },
-                                            class: "post-author",
-                                            "{node.author.get(0..12).unwrap_or(&node.author)}..."
+                                });
+
+                                rsx! {
+                                    div { 
+                                        class: "post",
+                                        key: "{node.id}",
+                                        
+                                        div { class: "post-header",
+                                            div { class: "avatar",
+                                                "{node.author.get(0..2).unwrap_or(\"??\")}"
+                                            }
+                                            div { class: "flex-1",
+                                                Link {
+                                                    to: crate::Route::UserProfileComponent { peer_id: node.author.clone() },
+                                                    class: "post-author",
+                                                    "{node.author.get(0..12).unwrap_or(&node.author)}..."
+                                                }
+                                            }
+                                            span { class: "post-time", "{node.timestamp}" }
                                         }
-                                    }
-                                    span { class: "post-time", "{node.timestamp}" }
-                                }
-                                
-                                p { class: "post-content", "{content}" }
-                                
-                                if !attachments.is_empty() {
-                                    div { class: "post-attachments",
-                                        for cid in attachments {
-                                            div { class: "post-attachment",
-                                                BlobImage { cid: cid.clone() }
+                                        
+                                        p { class: "post-content", "{content}" }
+                                        
+                                        if !attachments.is_empty() {
+                                            div { class: "post-attachments",
+                                                for cid in attachments {
+                                                    div { class: "post-attachment",
+                                                        BlobImage { cid: cid.clone() }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Like and Comment buttons
+                                        div { class: "post-actions",
+                                            button { 
+                                                class: if is_liked_by_me { "post-action-btn post-action-btn--liked" } else { "post-action-btn" },
+                                                onclick: {
+                                                    let cmd_tx = cmd_tx.clone();
+                                                    let pid = node.id.clone();
+                                                    move |_| {
+                                                        let _ = cmd_tx.send(AppCmd::LikePost { target_id: pid.clone(), remove: is_liked_by_me });
+                                                    }
+                                                },
+                                                span { class: "icon", if is_liked_by_me { "❤️" } else { "🤍" } }
+                                                span { class: "count", "{like_count}" }
+                                            }
+                                            button { 
+                                                class: "post-action-btn",
+                                                onclick: move |_| show_reply.set(!show_reply()),
+                                                span { class: "icon", "💬" }
+                                                span { class: "count", "{comment_count}" }
+                                            }
+                                        }
+                                        
+                                        // Comments section
+                                        if !comments.is_empty() || show_reply() {
+                                            div { class: "post-comments",
+                                                // Existing comments
+                                                for c_node in comments {
+                                                    CommentComponent { key: "{c_node.id}", node: c_node }
+                                                }
+                                                
+                                                // Reply input
+                                                if show_reply() {
+                                                    div { class: "post-comment-input",
+                                                        input {
+                                                            class: "input",
+                                                            placeholder: "Write a comment...",
+                                                            value: "{reply_content}",
+                                                            oninput: move |e| reply_content.set(e.value()),
+                                                            onkeypress: {
+                                                                let cmd_tx = cmd_tx.clone();
+                                                                let pid = node.id.clone();
+                                                                move |e: KeyboardEvent| {
+                                                                    if e.key() == Key::Enter && !reply_content().is_empty() {
+                                                                        let _ = cmd_tx.send(AppCmd::PostComment { parent_id: pid.clone(), content: reply_content() });
+                                                                        reply_content.set("".to_string());
+                                                                        let _ = cmd_tx.send(AppCmd::FetchComments { parent_id: pid.clone() });
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        button {
+                                                            class: "btn btn-primary btn-sm",
+                                                            onclick: {
+                                                                let cmd_tx = cmd_tx.clone();
+                                                                let pid = node.id.clone();
+                                                                move |_| {
+                                                                    if !reply_content().is_empty() {
+                                                                        let _ = cmd_tx.send(AppCmd::PostComment { parent_id: pid.clone(), content: reply_content() });
+                                                                        reply_content.set("".to_string());
+                                                                        let _ = cmd_tx.send(AppCmd::FetchComments { parent_id: pid.clone() });
+                                                                    }
+                                                                }
+                                                            },
+                                                            "Send"
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -189,7 +473,8 @@ pub fn HomeComponent() -> Element {
 }
 
 #[component]
-fn BlobImage(cid: String) -> Element {
+#[component]
+pub fn BlobImage(cid: String, class: Option<String>) -> Element {
     let app_state = use_context::<crate::components::AppState>();
     let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
     
@@ -206,8 +491,10 @@ fn BlobImage(cid: String) -> Element {
         }
     });
 
+    let extra_class = class.unwrap_or_default();
+
     rsx! {
-        div { class: "w-full h-full",
+        div { class: "w-full h-full {extra_class}",
             if let Some(s) = src {
                 img {
                     src: "{s}",
@@ -216,6 +503,93 @@ fn BlobImage(cid: String) -> Element {
             } else {
                 div { class: "h-24 w-full bg-[var(--bg-surface)] animate-pulse flex items-center justify-center",
                      span { class: "text-xs text-[var(--text-muted)]", "Loading..." }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CommentComponent(node: DagNode) -> Element {
+    let app_state = use_context::<crate::components::AppState>();
+    let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
+    
+    let mut show_reply = use_signal(|| false);
+    let mut reply_content = use_signal(|| "".to_string());
+    
+    // Get replies
+    let comments_map = app_state.comments.read();
+    let replies = comments_map.get(&node.id).cloned().unwrap_or_default();
+    drop(comments_map);
+
+    let comment_content = if let DagPayload::Comment(c) = &node.payload {
+        c.content.clone()
+    } else {
+        "".to_string()
+    };
+
+    let timestamp = node.timestamp.format("%H:%M").to_string();
+
+    // Fetch replies on mount
+    let cmd_tx_effect = cmd_tx.clone();
+    let node_id = node.id.clone();
+    use_effect(move || {
+       let _ = cmd_tx_effect.send(AppCmd::FetchComments { parent_id: node_id.clone() }); 
+    });
+
+    rsx! {
+        div { class: "comment",
+            div { class: "comment-avatar",
+                "{node.author.get(0..2).unwrap_or(\"??\")}"
+            }
+            div { class: "comment-body",
+                div { class: "comment-header",
+                    span { class: "comment-author", "{node.author.get(0..8).unwrap_or(\"??\")}..." }
+                    span { class: "comment-time", "{timestamp}" }
+                }
+                p { class: "comment-content", "{comment_content}" }
+                
+                div { class: "comment-actions",
+                    button { 
+                        class: "comment-reply-btn",
+                        onclick: move |_| show_reply.set(!show_reply()),
+                        if show_reply() { "Cancel" } else { "Reply" }
+                    }
+                    if !replies.is_empty() {
+                        span { class: "comment-reply-btn", " · {replies.len()} replies" }
+                    }
+                }
+                
+                // Reply input
+                if show_reply() {
+                    div { class: "post-comment-input",
+                        input {
+                            class: "input",
+                            placeholder: "Reply...",
+                            value: "{reply_content}",
+                            oninput: move |e| reply_content.set(e.value()),
+                            onkeypress: {
+                                let cmd_tx = cmd_tx.clone();
+                                let pid = node.id.clone();
+                                move |e: KeyboardEvent| {
+                                    if e.key() == Key::Enter && !reply_content().is_empty() {
+                                        let _ = cmd_tx.send(AppCmd::PostComment { parent_id: pid.clone(), content: reply_content() });
+                                        reply_content.set("".to_string());
+                                        let _ = cmd_tx.send(AppCmd::FetchComments { parent_id: pid.clone() });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Nested replies
+                if !replies.is_empty() {
+                    div { class: "comment-replies",
+                        for reply_node in replies {
+                            CommentComponent { key: "{reply_node.id}", node: reply_node }
+                        }
+                    }
                 }
             }
         }

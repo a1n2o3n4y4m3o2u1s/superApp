@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::path::Path;
 use crate::backend::dag::{DagNode, DagPayload};
 use serde_json;
+use chrono::{Utc, Duration};
 
 #[derive(Clone)]
 pub struct Store {
@@ -240,6 +241,75 @@ impl Store {
         Ok(posts)
     }
 
+    pub fn get_recent_stories(&self, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let now = Utc::now();
+        let twenty_four_hours_ago = now - Duration::hours(24);
+
+        let mut stories: Vec<DagNode> = nodes.into_iter()
+            .filter(|n| {
+                if n.r#type == "story:v1" {
+                    return n.timestamp > twenty_four_hours_ago;
+                }
+                false
+            })
+            .collect();
+
+        stories.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if stories.len() > limit {
+            stories.truncate(limit);
+        }
+        Ok(stories)
+    }
+
+    pub fn get_following(&self, author_pubkey: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut following = std::collections::HashSet::new();
+
+        // Sort by timestamp asc to reconstruct state
+        let mut follow_events: Vec<DagNode> = nodes.into_iter()
+            .filter(|n| n.author == author_pubkey && n.r#type == "follow:v1")
+            .collect();
+        follow_events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+        for node in follow_events {
+            if let DagPayload::Follow(f) = node.payload {
+                if f.follow {
+                    following.insert(f.target);
+                } else {
+                    following.remove(&f.target);
+                }
+            }
+        }
+
+        Ok(following.into_iter().collect())
+    }
+
+    pub fn get_followers(&self, target_pubkey: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        // Map author -> is_following
+        let mut follower_map = std::collections::HashMap::new();
+
+        let mut follow_events: Vec<DagNode> = nodes.into_iter()
+            .filter(|n| n.r#type == "follow:v1")
+            .collect();
+        follow_events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+        for node in follow_events {
+            if let DagPayload::Follow(f) = node.payload {
+                if f.target == target_pubkey {
+                    follower_map.insert(node.author, f.follow);
+                }
+            }
+        }
+
+        let followers: Vec<String> = follower_map.into_iter()
+            .filter(|(_, is_following)| *is_following)
+            .map(|(author, _)| author)
+            .collect();
+        Ok(followers)
+    }
+
     /// Get posts filtered by geohash prefix
     pub fn get_local_posts(&self, geohash_prefix: &str, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let mut posts: Vec<DagNode> = self.get_all_nodes()?
@@ -251,6 +321,43 @@ impl Store {
                             return gh.starts_with(geohash_prefix);
                         }
                     }
+                }
+                false
+            })
+            .collect();
+
+        posts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if posts.len() > limit {
+            posts.truncate(limit);
+        }
+        Ok(posts)
+    }
+
+    pub fn get_posts_by_author(&self, author_id: &str, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let mut posts: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.author == author_id && n.r#type == "post:v1")
+            .collect();
+
+        posts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if posts.len() > limit {
+            posts.truncate(limit);
+        }
+        Ok(posts)
+    }
+
+    pub fn get_following_posts(&self, my_pubkey: &str, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let following = self.get_following(my_pubkey)?;
+        let following_set: std::collections::HashSet<String> = following.into_iter().collect();
+        
+        // Also include own posts? Instagram usually does.
+        // Let's include own posts too.
+        
+        let mut posts: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| {
+                if n.r#type == "post:v1" {
+                     return following_set.contains(&n.author) || n.author == my_pubkey;
                 }
                 false
             })
@@ -601,10 +708,31 @@ impl Store {
         for (_, (_, node)) in latest_pages {
             results.push(node);
         }
-
+        
         results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(results)
     }
+    pub fn get_public_ledger_events(&self, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        // Retrieve events relevant to the public ledger: Token, Proposal, Vote, Candidacy, Contract, Web
+        // We filter by type and sort by timestamp descending
+        let nodes = self.get_all_nodes()?;
+        let mut events: Vec<DagNode> = nodes.into_iter()
+            .filter(|n| {
+                matches!(n.r#type.as_str(), 
+                    "token:v1" | 
+                    "proposal:v1" | 
+                    "vote:v1" | 
+                    "candidacy:v1" | 
+                    "contract:v1" |
+                    "contract_call:v1"
+                )
+            })
+            .collect();
+        
+        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(events.into_iter().take(limit).collect())
+    }
+
     pub fn get_contracts(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut contracts = Vec::new();
@@ -631,6 +759,24 @@ impl Store {
         //Sort by timestamp asc (execution order)
         calls.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         Ok(calls)
+    }
+
+    pub fn get_comments(&self, parent_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let all_nodes = self.get_all_nodes()?;
+        let mut comments = Vec::new();
+
+        for node in all_nodes {
+            if let DagPayload::Comment(c) = &node.payload {
+                if c.parent_id == parent_id {
+                    comments.push(node.clone());
+                }
+            }
+        }
+        
+        // Sort by timestamp (oldest first)
+        comments.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+        Ok(comments)
     }
 
     pub fn get_proposals(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
@@ -754,6 +900,50 @@ impl Store {
         Ok(unique_voters.len())
     }
 
+    /// Returns (count, is_liked_by_me)
+    pub fn get_likes_for_target(&self, target_id: &str, my_pubkey: &str) -> Result<(usize, bool), Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut likes = Vec::new();
+
+        for node in nodes {
+            if let DagPayload::Like(ref like) = node.payload {
+                if like.target_id == target_id {
+                    likes.push(node);
+                }
+            }
+        }
+
+        // Sort by timestamp descending so latest is first
+        likes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        // Keep latest state per author
+        let mut latest_likes: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        for node in likes {
+            if !latest_likes.contains_key(&node.author) {
+                if let DagPayload::Like(ref like) = node.payload {
+                     // If remove is true, it means they are NOT liking it currently.
+                     // But we must track that they interacted.
+                     // We actually just want to count those where !remove
+                     latest_likes.insert(node.author.clone(), !like.remove);
+                }
+            }
+        }
+
+        let mut count = 0;
+        let mut is_liked_by_me = false;
+
+        for (author, active) in latest_likes {
+            if active {
+                count += 1;
+                if author == my_pubkey {
+                    is_liked_by_me = true;
+                }
+            }
+        }
+
+        Ok((count, is_liked_by_me))
+    }
+
     pub fn get_my_web_pages(&self, pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut my_pages: std::collections::HashMap<String, (i64, DagNode)> = std::collections::HashMap::new();
@@ -777,9 +967,68 @@ impl Store {
         for (_, (_, node)) in my_pages {
             result.push(node);
         }
-        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(result)
     }
+
+    pub fn get_proposal_status(&self, proposal_id: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let node = self.get_node(proposal_id)?.ok_or("Proposal not found")?;
+        let proposal = match node.payload {
+            DagPayload::Proposal(p) => p,
+            _ => return Err("Node is not a proposal".into()),
+        };
+
+        let (yes, no, _abstain, petition, _unique) = self.get_proposal_vote_tally(proposal_id)?;
+        let total_users = self.count_unique_profiles()?;
+        
+        // Avoid division by zero
+        let total_users = if total_users == 0 { 1 } else { total_users };
+
+        // Thresholds
+        let (petition_threshold_percent, voting_duration_hours, pass_threshold_percent) = match proposal.r#type {
+            crate::backend::dag::ProposalType::Standard => (0.01, 168, 0.50), // 1% sigs, 1 week, >50% yes
+            crate::backend::dag::ProposalType::Constitutional => (0.01, 168, 0.66), // 1% sigs, 1 week, >66% yes
+            crate::backend::dag::ProposalType::Emergency => (0.05, 48, 0.50), // 5% sigs, 48 hours, >50% yes
+            crate::backend::dag::ProposalType::SetTax(_) => (0.01, 168, 0.50), // Treat as Standard for now
+            crate::backend::dag::ProposalType::DefineMinistries(_) => (0.01, 168, 0.50), // Standard requirements
+        };
+
+        let petition_threshold = (total_users as f64 * petition_threshold_percent).ceil() as usize;
+        
+        // Check if in Petition Phase
+        // meaningful_votes includes Petition signatures AND Yes votes (implicit support)
+        let meaningful_votes = petition + yes; 
+        if meaningful_votes < petition_threshold {
+            return Ok(format!("Petitioning ({}/{})", meaningful_votes, petition_threshold));
+        }
+
+        // Voting Phase
+        let now = chrono::Utc::now();
+        let created_at = node.timestamp;
+        let duration = now.signed_duration_since(created_at);
+        let hours_elapsed = duration.num_hours();
+
+        if hours_elapsed < voting_duration_hours {
+             let hours_left = voting_duration_hours - hours_elapsed;
+             return Ok(format!("Voting ({}h left)", hours_left));
+        }
+
+        // Finished - Calculate Result
+        let total_votes = yes + no; // Abstains don't count towards denominator in simple majority usually, or do they? 
+        // Plan says "Simple majority (50%+1)" and "Supermajority (66%+)". Usually implies of votes cast.
+        
+        if total_votes == 0 {
+            return Ok("Failed (No votes)".to_string());
+        }
+
+        let yes_percent = yes as f64 / total_votes as f64;
+        
+        if yes_percent > pass_threshold_percent {
+            Ok("Passed".to_string())
+        } else {
+            Ok("Rejected".to_string())
+        }
+    }
+
 
     pub fn get_reputation(&self, pubkey: &str) -> Result<crate::backend::dag::ReputationDetails, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
@@ -905,6 +1154,185 @@ impl Store {
     pub fn get_file(&self, cid: &str) -> Result<Option<DagNode>, Box<dyn std::error::Error>> {
         self.get_node(cid)
     }
+
+    pub fn get_recalls(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut recalls = Vec::new();
+        for node in nodes {
+             if let DagPayload::Recall(_) = node.payload {
+                 recalls.push(node);
+             }
+        }
+        recalls.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(recalls)
+    }
+
+    pub fn get_recall_votes(&self, recall_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut votes = Vec::new();
+        for node in nodes {
+             if let DagPayload::RecallVote(ref vote) = node.payload {
+                 if vote.recall_id == recall_id {
+                     votes.push(node);
+                 }
+             }
+        }
+        votes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(votes)
+    }
+
+    pub fn get_recall_tally(&self, recall_id: &str) -> Result<(usize, usize, usize), Box<dyn std::error::Error>> {
+        let votes = self.get_recall_votes(recall_id)?;
+        
+        // Sort by timestamp descending so latest is first
+        let mut sorted_votes = votes;
+        sorted_votes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        // Only keep the latest vote from each author
+        let mut latest_votes: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        for node in sorted_votes {
+            if let DagPayload::RecallVote(ref vote) = node.payload {
+                if !latest_votes.contains_key(&node.author) {
+                    latest_votes.insert(node.author.clone(), vote.vote);
+                }
+            }
+        }
+        
+        let mut remove_count = 0;
+        let mut keep_count = 0;
+        
+        for remove in latest_votes.values() {
+            if *remove {
+                remove_count += 1;
+            } else {
+                keep_count += 1;
+            }
+        }
+        
+        let unique_voters = latest_votes.len();
+        Ok((remove_count, keep_count, unique_voters))
+    }
+
+    pub fn get_oversight_cases(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut cases = Vec::new();
+        for node in nodes {
+             if let DagPayload::OversightCase(_) = node.payload {
+                 cases.push(node);
+             }
+        }
+        cases.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(cases)
+    }
+
+    pub fn get_user_jury_duty(&self, user_pubkey: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_oversight_cases()?;
+        let mut duty = Vec::new();
+        for node in nodes {
+            if let DagPayload::OversightCase(ref case) = node.payload {
+                if case.jury_members.contains(&user_pubkey.to_string()) && case.status == "Open" {
+                    duty.push(node);
+                }
+            }
+        }
+        Ok(duty)
+    }
+
+    pub fn get_jury_votes(&self, case_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut votes = Vec::new();
+        for node in nodes {
+             if let DagPayload::JuryVote(ref vote) = node.payload {
+                 if vote.case_id == case_id {
+                     votes.push(node);
+                 }
+             }
+        }
+        Ok(votes)
+    }
+
+    pub fn get_current_tax_rate(&self) -> Result<u8, Box<dyn std::error::Error>> {
+        let proposals = self.get_proposals()?;
+        
+        // Filter for SetTax proposals
+        let mut tax_proposals = Vec::new();
+        for node in proposals {
+            if let DagPayload::Proposal(ref p) = node.payload {
+                if let crate::backend::dag::ProposalType::SetTax(rate) = p.r#type {
+                    tax_proposals.push((node.id.clone(), rate, node.timestamp));
+                }
+            }
+        }
+
+        // Sort by timestamp descending (latest first)
+        tax_proposals.sort_by(|a, b| b.2.cmp(&a.2));
+
+        // Find the first one that passed
+        for (id, rate, _) in tax_proposals {
+             if let Ok(status) = self.get_proposal_status(&id) {
+                 if status == "Passed" {
+                     return Ok(rate);
+                 }
+             }
+        }
+
+        // Default to 0 if no tax proposal has passed
+        Ok(0)
+    }
+    pub fn search_files(&self, query: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+        
+        for node in nodes {
+             if let DagPayload::File(ref f) = node.payload {
+                let matches = f.name.to_lowercase().contains(&query_lower) 
+                    || f.mime_type.to_lowercase().contains(&query_lower);
+                
+                if matches {
+                     results.push(node);
+                }
+            }
+        }
+        
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(results)
+    }
+    pub fn get_active_ministries(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        // Start with the default ministries
+        let default_ministries = vec![
+            "VerificationAndIdentity".to_string(),
+            "TreasuryAndDistribution".to_string(),
+            "NetworkAndProtocols".to_string(),
+        ];
+
+        // Scan for passed "DefineMinistries" proposals to override this list
+        let proposals = self.get_proposals()?;
+        
+        // Filter for DefineMinistries proposals
+        let mut ministry_proposals = Vec::new();
+        for node in proposals {
+            if let DagPayload::Proposal(ref p) = node.payload {
+                if let crate::backend::dag::ProposalType::DefineMinistries(ref m) = p.r#type {
+                    ministry_proposals.push((node.id.clone(), m.clone(), node.timestamp));
+                }
+            }
+        }
+
+        // Sort by timestamp descending (latest first)
+        ministry_proposals.sort_by(|a, b| b.2.cmp(&a.2));
+
+        // Find the first one that passed
+        for (id, ministries, _) in ministry_proposals {
+             if let Ok(status) = self.get_proposal_status(&id) {
+                 if status == "Passed" {
+                     return Ok(ministries);
+                 }
+             }
+        }
+        
+        Ok(default_ministries)
+    }
 }
 
 #[cfg(test)]
@@ -939,6 +1367,194 @@ mod tests {
         
         let retrieved_node = retrieved.unwrap();
         assert_eq!(retrieved_node.id, node.id);
-        assert_eq!(retrieved_node.author, node.author);
+        // author in DagNode is now PeerID string
+        assert_eq!(retrieved_node.author, libp2p::PeerId::from_public_key(&keypair.public()).to_string());
+    }
+    #[test]
+    fn test_tax_rate_logic() {
+        use chrono::{Duration, Utc};
+        let store = Store::new_in_memory().expect("Failed to create store");
+        let keypair = Keypair::generate_ed25519();
+        let pubkey_hex = hex::encode(keypair.public().encode_protobuf());
+
+        // 1. Initial rate should be 0
+        assert_eq!(store.get_current_tax_rate().unwrap(), 0);
+
+        // 2. Setup: Make user a founder so they count as "Total Users" (1) and are Verified
+        let profile_payload = DagPayload::Profile(crate::backend::dag::ProfilePayload {
+            name: "Founder".to_string(),
+            bio: "".to_string(),
+            founder_id: Some(1),
+            encryption_pubkey: None,
+            photo: None,
+        });
+        let profile = DagNode::new("profile:v1".to_string(), profile_payload, vec![], &keypair, 0).unwrap();
+        store.put_node(&profile).expect("Failed to store profile");
+        store.update_head(&pubkey_hex, &profile.id).expect("Failed updates");
+
+        // 3. Create a Tax Proposal (10%) - Need it to be "Passed"
+        // Condition: >50% yes AND Duration passed (1 week for Standard/SetTax)
+        let payload = DagPayload::Proposal(crate::backend::dag::ProposalPayload {
+            title: "Tax 10%".to_string(),
+            description: "impot".to_string(),
+            r#type: crate::backend::dag::ProposalType::SetTax(10),
+        });
+        
+        let mut proposal = DagNode::new("proposal:v1".to_string(), payload, vec![], &keypair, 0).unwrap();
+        
+        // Manipulate timestamp to 8 days ago
+        proposal.timestamp = Utc::now() - Duration::days(8);
+        proposal.id = proposal.calculate_cid().unwrap();
+        proposal.sig = proposal.sign(&keypair).unwrap();
+        
+        store.put_node(&proposal).unwrap();
+
+        // Still 0 because no votes
+        assert_eq!(store.get_current_tax_rate().unwrap(), 0);
+
+        // 4. Vote Yes
+        let vote_payload = DagPayload::Vote(crate::backend::dag::VotePayload {
+            proposal_id: proposal.id.clone(),
+            vote: crate::backend::dag::VoteType::Yes,
+        });
+        let vote = DagNode::new("vote:v1".to_string(), vote_payload, vec![], &keypair, 0).unwrap();
+        store.put_node(&vote).unwrap();
+
+        // Should be 10 now (1/1 users = 100% > 50%, Time > 1 week)
+        assert_eq!(store.get_current_tax_rate().unwrap(), 10);
+
+        // 5. Create a newer proposal (20%) - Recent (not passed time)
+        let payload2 = DagPayload::Proposal(crate::backend::dag::ProposalPayload {
+            title: "Tax 20%".to_string(),
+            description: "more".to_string(),
+            r#type: crate::backend::dag::ProposalType::SetTax(20),
+        });
+        let proposal2 = DagNode::new("proposal:v1".to_string(), payload2, vec![], &keypair, 0).unwrap();
+        store.put_node(&proposal2).unwrap();
+        
+        let vote2_payload = DagPayload::Vote(crate::backend::dag::VotePayload {
+            proposal_id: proposal2.id.clone(),
+            vote: crate::backend::dag::VoteType::Yes,
+        });
+        let vote2 = DagNode::new("vote:v1".to_string(), vote2_payload, vec![], &keypair, 0).unwrap();
+        store.put_node(&vote2).unwrap();
+
+        // Still 10 because 20% proposal is "Voting" (time not elapsed)
+        assert_eq!(store.get_current_tax_rate().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_dynamic_ministries() {
+        use chrono::{Duration, Utc};
+        let store = Store::new_in_memory().expect("Failed to create store");
+        let keypair = Keypair::generate_ed25519();
+        let pubkey_hex = hex::encode(keypair.public().encode_protobuf());
+
+        // 1. Initial State: Default Ministries
+        let defaults = store.get_active_ministries().unwrap();
+        assert_eq!(defaults.len(), 3);
+        assert!(defaults.contains(&"VerificationAndIdentity".to_string()));
+
+        // 2. Setup User (Founder)
+        let profile_payload = DagPayload::Profile(crate::backend::dag::ProfilePayload {
+            name: "Founder".to_string(),
+            bio: "".to_string(),
+            founder_id: Some(1),
+            encryption_pubkey: None,
+            photo: None,
+        });
+        let profile = DagNode::new("profile:v1".to_string(), profile_payload, vec![], &keypair, 0).unwrap();
+        store.put_node(&profile).expect("Failed to store profile");
+        store.update_head(&pubkey_hex, &profile.id).expect("Failed updates");
+
+        // 3. Create Proposal to Change Ministries
+        let new_ministries = vec!["MinistryOfTruth".to_string(), "MinistryOfPeace".to_string()];
+        let payload = DagPayload::Proposal(crate::backend::dag::ProposalPayload {
+            title: "New World Order".to_string(),
+            description: "Better ministries".to_string(),
+            r#type: crate::backend::dag::ProposalType::DefineMinistries(new_ministries.clone()),
+        });
+        
+        let mut proposal = DagNode::new("proposal:v1".to_string(), payload, vec![], &keypair, 0).unwrap();
+        // Manipulate time to ensure it can pass
+        proposal.timestamp = Utc::now() - Duration::days(8);
+        proposal.id = proposal.calculate_cid().unwrap(); 
+        proposal.sig = proposal.sign(&keypair).unwrap();
+        
+        store.put_node(&proposal).unwrap();
+
+        // 4. Vote Yes to pass it
+        let vote_payload = DagPayload::Vote(crate::backend::dag::VotePayload {
+            proposal_id: proposal.id.clone(),
+            vote: crate::backend::dag::VoteType::Yes,
+        });
+        let vote = DagNode::new("vote:v1".to_string(), vote_payload, vec![], &keypair, 0).unwrap();
+        store.put_node(&vote).unwrap();
+
+        // 5. Check Ministries - Should be new list
+        let active = store.get_active_ministries().unwrap();
+        assert_eq!(active.len(), 2);
+        assert_eq!(active, new_ministries);
+
+        // 6. Create NEWER proposal but DON'T vote on it (Status: Voting)
+        let newer_ministries = vec!["MinistryOfSillyWalks".to_string()];
+        let payload2 = DagPayload::Proposal(crate::backend::dag::ProposalPayload {
+            title: "Silly".to_string(),
+            description: "Walking".to_string(),
+            r#type: crate::backend::dag::ProposalType::DefineMinistries(newer_ministries.clone()),
+        });
+        let proposal2 = DagNode::new("proposal:v1".to_string(), payload2, vec![], &keypair, 0).unwrap();
+        store.put_node(&proposal2).unwrap();
+
+        // Should still be the previous passed one
+        let active_now = store.get_active_ministries().unwrap();
+        assert_eq!(active_now, new_ministries);
     }
 }
+
+
+    #[test]
+    fn test_social_comments() {
+        let store = Store::new_in_memory().unwrap();
+        
+        // 1. Create a Post
+        let post_payload = DagPayload::Post(crate::backend::dag::PostPayload {
+             content: "Main Post".to_string(),
+             attachments: vec![],
+             geohash: None,
+        });
+        let post = crate::backend::dag::DagNode::new(
+             "post:v1".to_string(),
+             post_payload,
+             vec![],
+             &crate::backend::dag::Keypair::generate_ed25519(),
+             0,
+        ).unwrap();
+        store.put_node(&post).unwrap();
+
+        // 2. Create a Comment
+        let comment_payload = DagPayload::Comment(crate::backend::dag::CommentPayload {
+            parent_id: post.id.clone(),
+            content: "First Comment".to_string(),
+            attachments: vec![],
+        });
+        let comment = crate::backend::dag::DagNode::new(
+             "comment:v1".to_string(),
+             comment_payload,
+             vec![],
+             &crate::backend::dag::Keypair::generate_ed25519(),
+             0,
+        ).unwrap();
+        store.put_node(&comment).unwrap();
+
+        // 3. Verify
+        let comments = store.get_comments(&post.id).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].id, comment.id);
+        
+        if let DagPayload::Comment(c) = &comments[0].payload {
+            assert_eq!(c.content, "First Comment");
+        } else {
+             panic!("Wrong payload type");
+        }
+    }

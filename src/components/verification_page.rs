@@ -22,7 +22,7 @@ pub fn VerificationPage() -> Element {
             let n = name.read().clone();
             let b = bio.read().clone();
             if !n.is_empty() {
-                let _ = cmd_tx.send(AppCmd::PublishProfile { name: n, bio: b });
+                let _ = cmd_tx.send(AppCmd::PublishProfile { name: n, bio: b, photo: None });
                 let cmd_tx = cmd_tx.clone();
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]

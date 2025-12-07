@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use chrono::{DateTime, Utc};
-use libp2p::identity::{Keypair, PublicKey};
+pub use libp2p::identity::{Keypair, PublicKey};
+use libp2p::PeerId;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DagNode {
@@ -9,7 +10,8 @@ pub struct DagNode {
     pub id: String, // CID
     pub payload: DagPayload,
     pub prev: Vec<String>, // CIDs of parents
-    pub author: String, // Public key hex
+    pub author: String, // PeerID string
+    pub public_key: String, // Public key hex
     pub nonce: u64,
     pub timestamp: DateTime<Utc>,
     pub sig: String, // Hex encoded signature
@@ -30,7 +32,13 @@ pub struct ReputationBreakdown {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", content = "data")]
+pub struct FollowPayload {
+    pub target: String,
+    pub follow: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "payload")]
 pub enum DagPayload {
     #[serde(rename = "profile:v1")]
     Profile(ProfilePayload),
@@ -68,6 +76,59 @@ pub enum DagPayload {
     Report(ReportPayload),
     #[serde(rename = "file:v1")]
     File(FilePayload),
+    #[serde(rename = "recall:v1")]
+    Recall(RecallPayload),
+    #[serde(rename = "recall_vote:v1")]
+    RecallVote(RecallVotePayload),
+    #[serde(rename = "oversight_case:v1")]
+    OversightCase(OversightCasePayload),
+    #[serde(rename = "jury_vote:v1")]
+    JuryVote(JuryVotePayload),
+    #[serde(rename = "comment:v1")]
+    Comment(CommentPayload),
+    #[serde(rename = "like:v1")]
+    Like(LikePayload),
+    #[serde(rename = "story:v1")]
+    Story(StoryPayload),
+    #[serde(rename = "follow:v1")]
+    Follow(FollowPayload),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StoryPayload {
+    pub media_cid: String,
+    #[serde(default)]
+    pub caption: String, 
+    #[serde(default)]
+    pub geohash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommentPayload {
+    pub parent_id: String, // CID of the post or comment being replied to
+    pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LikePayload {
+    pub target_id: String, // CID of the post/comment being liked
+    pub remove: bool, // true if this is an "unlike" action (toggle off)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OversightCasePayload {
+    pub case_id: String,
+    pub report_id: String,
+    pub jury_members: Vec<String>, // List of public keys (hex)
+    pub status: String, // "Open", "Closed"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JuryVotePayload {
+    pub case_id: String,
+    pub vote: String, // "Uphold", "Dismiss"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -89,6 +150,7 @@ pub struct ProfilePayload {
     pub bio: String,
     pub founder_id: Option<u32>,
     pub encryption_pubkey: Option<String>, // Hex encoded X25519 public key
+    pub photo: Option<String>, // CID of profile photo blob
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -148,6 +210,8 @@ pub enum ProposalType {
     Standard,
     Constitutional,
     Emergency,
+    SetTax(u8), // Tax rate in percent (0-100)
+    DefineMinistries(Vec<String>), // List of ministry names
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -164,16 +228,8 @@ pub enum VoteType {
     PetitionSignature,
 }
 
-/// The three initial ministries as defined in the governance plan
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Ministry {
-    /// Ministry of Verification & Identity - 3 positions, 6-month terms
-    VerificationAndIdentity,
-    /// Ministry of Treasury & Distribution - 3 positions, 6-month terms
-    TreasuryAndDistribution,
-    /// Ministry of Network & Protocols - 5 positions, 8-month terms
-    NetworkAndProtocols,
-}
+/// Ministry identifier (e.g., "VerificationAndIdentity")
+pub type Ministry = String;
 
 /// A verified user declaring candidacy for a ministry position
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -246,6 +302,19 @@ pub struct WebPayload {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecallPayload {
+    pub target_official: String, // Hex pubkey of the official to recall
+    pub ministry: Ministry,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecallVotePayload {
+    pub recall_id: String, // CID of the recall node
+    pub vote: bool, // true = remove, false = keep
+}
+
 impl DagNode {
     pub fn new(
         r#type: String,
@@ -255,16 +324,19 @@ impl DagNode {
         nonce: u64,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = Utc::now();
-        let author_pubkey = keypair.public();
-        let author_hex = hex::encode(author_pubkey.encode_protobuf());
+    let author_pubkey = keypair.public();
+    let peer_id = PeerId::from_public_key(&author_pubkey);
+    let author_str = peer_id.to_string();
+    let pubkey_hex = hex::encode(author_pubkey.encode_protobuf());
 
-        let mut node = Self {
-            r#type,
-            id: String::new(), // Placeholder
-            payload,
-            prev,
-            author: author_hex,
-            nonce,
+    let mut node = Self {
+        r#type,
+        id: String::new(), // Placeholder
+        payload,
+        prev,
+        author: author_str,
+        public_key: pubkey_hex,
+        nonce,
             timestamp,
             sig: String::new(), // Placeholder
         };
@@ -289,23 +361,25 @@ impl DagNode {
         // Here we'll use JSON of a specific structure for simplicity.
         
         #[derive(Serialize)]
-        struct CanonicalView<'a> {
-            r#type: &'a str,
-            payload: &'a DagPayload,
-            prev: &'a [String],
-            author: &'a str,
-            nonce: u64,
-            timestamp: DateTime<Utc>,
-        }
+    struct CanonicalView<'a> {
+        r#type: &'a str,
+        payload: &'a DagPayload,
+        prev: &'a [String],
+        author: &'a str,
+        public_key: &'a str,
+        nonce: u64,
+        timestamp: DateTime<Utc>,
+    }
 
-        let view = CanonicalView {
-            r#type: &self.r#type,
-            payload: &self.payload,
-            prev: &self.prev,
-            author: &self.author,
-            nonce: self.nonce,
-            timestamp: self.timestamp,
-        };
+    let view = CanonicalView {
+        r#type: &self.r#type,
+        payload: &self.payload,
+        prev: &self.prev,
+        author: &self.author,
+        public_key: &self.public_key,
+        nonce: self.nonce,
+        timestamp: self.timestamp,
+    };
 
         let json = serde_json::to_string(&view)?;
         let mut hasher = Sha256::new();
@@ -314,7 +388,7 @@ impl DagNode {
         Ok(hex::encode(result))
     }
 
-    fn sign(&self, keypair: &Keypair) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn sign(&self, keypair: &Keypair) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         // We sign the CID (which represents the content)
         let msg = self.id.as_bytes();
         let sig = keypair.sign(msg)?;
@@ -328,15 +402,21 @@ impl DagNode {
             return Ok(false);
         }
 
-        // 2. Decode author public key
-        let pubkey_bytes = hex::decode(&self.author)?;
-        let pubkey = PublicKey::try_decode_protobuf(&pubkey_bytes)?;
+        // 2. Decode public key from field
+    let pubkey_bytes = hex::decode(&self.public_key)?;
+    let pubkey = PublicKey::try_decode_protobuf(&pubkey_bytes)?;
 
-        // 3. Verify signature against CID
-        let sig_bytes = hex::decode(&self.sig)?;
-        let msg = self.id.as_bytes();
-        
-        Ok(pubkey.verify(msg, &sig_bytes))
+    // Verify that the author PeerID matches this public key
+    let derived_peer_id = PeerId::from_public_key(&pubkey);
+    if derived_peer_id.to_string() != self.author {
+         return Ok(false);
+    }
+
+    // 3. Verify signature against CID
+    let sig_bytes = hex::decode(&self.sig)?;
+    let msg = self.id.as_bytes();
+    
+    Ok(pubkey.verify(msg, &sig_bytes))
     }
 }
 

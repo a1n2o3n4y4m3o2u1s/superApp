@@ -7,6 +7,7 @@ pub mod verification_page;
 pub mod browser_page;
 pub mod marketplace_page;
 pub mod governance_page;
+pub mod transparency_page;
 
 
 
@@ -53,9 +54,13 @@ pub struct AppState {
     // Governance
     pub proposals: Signal<Vec<DagNode>>,
     pub proposal_votes: Signal<std::collections::HashMap<String, Vec<DagNode>>>,
-    pub proposal_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize, usize, usize)>>,
+    pub proposal_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize, usize, usize, String)>>,
     pub candidates: Signal<Vec<DagNode>>,
     pub candidate_tallies: Signal<std::collections::HashMap<String, usize>>,
+    pub recalls: Signal<Vec<DagNode>>,
+    pub recall_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize)>>,
+    pub oversight_cases: Signal<Vec<DagNode>>,
+    pub jury_duty: Signal<Vec<DagNode>>,
     pub reputation: Signal<Option<crate::backend::dag::ReputationDetails>>,
     pub my_web_pages: Signal<Vec<DagNode>>,
     pub reports: Signal<Vec<DagNode>>,
@@ -65,6 +70,16 @@ pub struct AppState {
     pub browser_url: Signal<String>,
     pub browser_content: Signal<Option<String>>,
     pub active_tab: Signal<String>,
+    pub user_posts: Signal<Vec<DagNode>>,
+    pub following_posts: Signal<Vec<DagNode>>,
+    pub comments: Signal<std::collections::HashMap<String, Vec<DagNode>>>,
+    pub public_ledger: Signal<Vec<DagNode>>,
+    pub file_search_results: Signal<Vec<DagNode>>,
+    pub ministries: Signal<Vec<String>>,
+    pub likes: Signal<std::collections::HashMap<String, (usize, bool)>>, // TargetID -> (Count, IsLikedByMe)
+    pub stories: Signal<Vec<DagNode>>,
+    pub seen_stories: Signal<HashSet<String>>,
+    pub following: Signal<HashSet<String>>,
 }
 
 impl AppState {
@@ -99,6 +114,10 @@ impl AppState {
             proposal_tallies: use_signal(|| std::collections::HashMap::new()),
             candidates: use_signal(|| vec![]),
             candidate_tallies: use_signal(|| std::collections::HashMap::new()),
+            recalls: use_signal(|| vec![]),
+            recall_tallies: use_signal(|| std::collections::HashMap::new()),
+            oversight_cases: use_signal(|| vec![]),
+            jury_duty: use_signal(|| vec![]),
             reputation: use_signal(|| None),
             my_web_pages: use_signal(|| vec![]),
             reports: use_signal(|| vec![]),
@@ -108,6 +127,16 @@ impl AppState {
             browser_url: use_signal(|| "sp://welcome".to_string()),
             browser_content: use_signal(|| None),
             active_tab: use_signal(|| "feed".to_string()),
+            user_posts: use_signal(|| Vec::<DagNode>::new()),
+            following_posts: use_signal(|| Vec::<DagNode>::new()),
+            public_ledger: use_signal(|| vec![]),
+            file_search_results: use_signal(|| vec![]),
+            ministries: use_signal(|| vec![]),
+            comments: use_signal(|| std::collections::HashMap::new()),
+            likes: use_signal(|| std::collections::HashMap::new()),
+            stories: use_signal(|| vec![]),
+            seen_stories: use_signal(|| HashSet::new()),
+            following: use_signal(|| HashSet::new()),
         }
     }
 }

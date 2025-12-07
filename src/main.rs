@@ -20,13 +20,15 @@ use components::marketplace_page;
 use marketplace_page::MarketplaceComponent;
 use components::governance_page;
 use governance_page::GovernanceComponent;
+use components::transparency_page;
+use transparency_page::TransparencyComponent;
 
 use dioxus::prelude::*;
 use tokio::sync::mpsc;
 use backend::{AppCmd, AppEvent};
 
 #[derive(Routable, Clone, PartialEq)]
-enum Route {
+pub enum Route {
     #[layout(RootLayout)]
         #[layout(NavComponent)]
         #[route("/")]
@@ -45,6 +47,8 @@ enum Route {
         MarketplaceComponent {},
         #[route("/governance")]
         GovernanceComponent {},
+        #[route("/transparency")]
+        TransparencyComponent {},
         #[end_layout]
     
     #[route("/verify")]
@@ -63,13 +67,13 @@ fn main() {
 fn App() -> Element {
     // Initialize global state
     let mut messages = use_signal(|| Vec::<(DagNode, String)>::new());
-    let mut blocks = use_signal(|| Vec::<DagNode>::new());
-    let mut history = use_signal(|| Vec::<DagNode>::new());
-    let mut user_profiles = use_signal(|| std::collections::HashMap::<String, backend::dag::ProfilePayload>::new());
-    let mut page_title = use_signal(|| "SuperApp".to_string());
-    let mut browser_url = use_signal(|| "sp://welcome".to_string());
-    let mut browser_content = use_signal(|| None::<String>);
-    let mut active_tab = use_signal(|| "feed".to_string());
+    let blocks = use_signal(|| Vec::<DagNode>::new());
+    let history = use_signal(|| Vec::<DagNode>::new());
+    let user_profiles = use_signal(|| std::collections::HashMap::<String, backend::dag::ProfilePayload>::new());
+    let page_title = use_signal(|| "SuperApp".to_string());
+    let browser_url = use_signal(|| "sp://welcome".to_string());
+    let browser_content = use_signal(|| None::<String>);
+    let active_tab = use_signal(|| "feed".to_string());
     let mut peers = use_signal(|| HashSet::<String>::new());
     let mut local_peer_id = use_signal(|| String::new());
     let mut profile = use_signal(|| None::<backend::dag::ProfilePayload>);
@@ -91,19 +95,37 @@ fn App() -> Element {
     let mut contract_states = use_signal(|| std::collections::HashMap::<String, String>::new());
     let mut proposals = use_signal(|| Vec::<DagNode>::new());
     let mut proposal_votes = use_signal(|| std::collections::HashMap::<String, Vec<DagNode>>::new());
-    let mut proposal_tallies = use_signal(|| std::collections::HashMap::<String, (usize, usize, usize, usize, usize)>::new());
+    let mut proposal_tallies = use_signal(|| std::collections::HashMap::<String, (usize, usize, usize, usize, usize, String)>::new());
     let mut candidates = use_signal(|| Vec::<DagNode>::new());
     let mut candidate_tallies = use_signal(|| std::collections::HashMap::<String, usize>::new());
+    let mut recalls = use_signal(|| Vec::<DagNode>::new());
+    let mut recall_tallies = use_signal(|| std::collections::HashMap::<String, (usize, usize, usize)>::new());
+    let mut oversight_cases = use_signal(|| Vec::<DagNode>::new());
+    let mut jury_duty = use_signal(|| Vec::<DagNode>::new());
     let mut reputation = use_signal(|| None::<backend::dag::ReputationDetails>);
     let mut my_web_pages = use_signal(|| Vec::<DagNode>::new());
     let mut reports = use_signal(|| Vec::<DagNode>::new());
     let mut files = use_signal(|| Vec::<DagNode>::new());
-    
+    let mut public_ledger = use_signal(|| Vec::<DagNode>::new());
+    let mut file_search_results = use_signal(|| Vec::<DagNode>::new());
+    let mut ministries = use_signal(|| Vec::<String>::new());
+    let mut comments = use_signal(|| std::collections::HashMap::<String, Vec<DagNode>>::new());
+    let mut likes = use_signal(|| std::collections::HashMap::<String, (usize, bool)>::new());
+    let mut stories = use_signal(|| Vec::<DagNode>::new());
+    let seen_stories = use_signal(|| HashSet::<String>::new());
+    let mut following = use_signal(|| HashSet::<String>::new());
+    let mut user_posts = use_signal(|| Vec::<DagNode>::new());
+    let mut following_posts = use_signal(|| Vec::<DagNode>::new());
+        
     // Groups
     let mut groups = use_signal(|| Vec::<DagNode>::new());
     let mut group_messages = use_signal(|| std::collections::HashMap::<String, Vec<(DagNode, String)>>::new());
     
-    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies, reputation, my_web_pages, reports, groups, group_messages, files });
+    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies,        recalls,
+        recall_tallies,
+        oversight_cases,
+        jury_duty,
+        reputation, my_web_pages, reports, groups, group_messages, files, public_ledger, file_search_results, ministries, comments, likes, stories, seen_stories, following, user_posts, following_posts });
 
     // Initialize backend and context
     use_context_provider(|| {
@@ -123,6 +145,7 @@ fn App() -> Element {
         });
 
         // Spawn a task to handle events from the backend
+        let cmd_tx_clone = cmd_tx.clone();
         spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 println!("UI Received event: {:?}", event);
@@ -137,7 +160,8 @@ fn App() -> Element {
                         peers.write().insert(peer);
                     }
                     AppEvent::MyIdentity(id) => {
-                        local_peer_id.set(id);
+                        local_peer_id.set(id.clone());
+                        let _ = cmd_tx_clone.send(AppCmd::FetchFollowing { target: id });
                     }
                     AppEvent::ProfileFetched(p) => {
                         profile.set(p);
@@ -203,6 +227,20 @@ fn App() -> Element {
                              "file:v1" => {
                                  files.write().insert(0, node.clone());
                              }
+                             "story:v1" => {
+                                 stories.write().insert(0, node.clone());
+                             }
+                             "follow:v1" => {
+                                 if node.author == local_peer_id.read().clone() {
+                                     if let backend::dag::DagPayload::Follow(f) = &node.payload {
+                                         if f.follow {
+                                             following.write().insert(f.target.clone());
+                                         } else {
+                                             following.write().remove(&f.target);
+                                         }
+                                     }
+                                 }
+                             }
                              _ => {}
                          }
                     }
@@ -240,8 +278,8 @@ fn App() -> Element {
                     AppEvent::ProposalVotesFetched { proposal_id, votes } => {
                         proposal_votes.write().insert(proposal_id, votes);
                     }
-                    AppEvent::ProposalTallyFetched { proposal_id, yes, no, abstain, petition, unique_voters } => {
-                        proposal_tallies.write().insert(proposal_id, (yes, no, abstain, petition, unique_voters));
+                    AppEvent::ProposalTallyFetched { proposal_id, yes, no, abstain, petition, unique_voters, status } => {
+                        proposal_tallies.write().insert(proposal_id, (yes, no, abstain, petition, unique_voters, status));
                     }
                     AppEvent::CandidatesFetched(fetched_candidates) => {
                         candidates.set(fetched_candidates);
@@ -249,9 +287,21 @@ fn App() -> Element {
                     AppEvent::CandidateTallyFetched { candidacy_id, votes } => {
                         candidate_tallies.write().insert(candidacy_id, votes);
                     }
-                    AppEvent::ReputationFetched(details) => {
-                        reputation.set(Some(details));
+                    AppEvent::RecallsFetched(fetched_recalls) => {
+                        recalls.set(fetched_recalls);
                     }
+                    AppEvent::RecallTallyFetched { recall_id, remove, keep, unique_voters } => {
+                        recall_tallies.write().insert(recall_id, (remove, keep, unique_voters));
+                    }
+                    AppEvent::ReputationFetched(details) => {
+                    reputation.set(Some(details));
+                }
+                AppEvent::OversightCasesFetched(cases) => {
+                    oversight_cases.set(cases);
+                }
+                AppEvent::JuryDutyFetched(cases) => {
+                    jury_duty.set(cases);
+                }    
                     AppEvent::MyWebPagesFetched(pages) => {
                         my_web_pages.set(pages);
                     }
@@ -275,9 +325,37 @@ fn App() -> Element {
                     }
                     AppEvent::FileUploaded(node) => {
                         // Already handled via BlockReceived usually, but ensure it's in list if not
-                        // Actually BlockReceived handles pushing to list if we add case there.
-                        // But let's verify.
-                        // I added "file:v1" handler in BlockReceived above.
+                    }
+                    AppEvent::PublicLedgerFetched(events) => {
+                        public_ledger.set(events);
+                    }
+                    AppEvent::FileSearchResults(results) => {
+                        file_search_results.set(results);
+                    }
+                    AppEvent::MinistriesFetched(m) => {
+                        ministries.set(m);
+                    }
+                    AppEvent::CommentsFetched { parent_id, comments: c } => {
+                        comments.write().insert(parent_id, c);
+                    }
+                    AppEvent::LikesFetched { target_id, count, is_liked_by_me } => {
+                        likes.write().insert(target_id, (count, is_liked_by_me));
+                    }
+                    AppEvent::StoriesFetched(s) => {
+                        stories.set(s);
+                    }
+                    AppEvent::FollowingFetched(f) => {
+                        let mut set = HashSet::new();
+                        for id in f {
+                            set.insert(id);
+                        }
+                        following.set(set);
+                    }
+                    AppEvent::UserPostsFetched(p) => {
+                        user_posts.set(p);
+                    }
+                    AppEvent::FollowingPostsFetched(p) => {
+                        following_posts.set(p);
                     }
                     _ => {}
                 }
@@ -287,6 +365,7 @@ fn App() -> Element {
         // Initial checks
         let _ = cmd_tx.send(AppCmd::CheckVerificationStatus);
         let _ = cmd_tx.send(AppCmd::FetchStorageStats);
+        let _ = cmd_tx.send(AppCmd::FetchMinistries);
 
         // Return the sender to be stored in context
         cmd_tx
