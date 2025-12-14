@@ -299,6 +299,22 @@ impl Backend {
 
     pub async fn run(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
+        {
+            println!("Attempting to dial bootstrap nodes...");
+            for addr_str in network::BOOTSTRAP_NODES.iter() {
+                if let Ok(addr) = addr_str.parse::<libp2p::Multiaddr>() {
+                    match self.swarm.dial(addr.clone()) {
+                        Ok(_) => println!("Dialed bootstrap node: {}", addr),
+                        Err(e) => eprintln!("Failed to dial bootstrap node {}: {:?}", addr, e),
+                    }
+                }
+            }
+            if let Err(e) = self.swarm.behaviour_mut().kad.bootstrap() {
+                 eprintln!("Failed to bootstrap Kademlia: {:?}", e);
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         let mut replication_interval = tokio::time::interval(Duration::from_secs(5));
         
         #[cfg(target_arch = "wasm32")]
@@ -1512,6 +1528,13 @@ impl Backend {
             AppCmd::FetchUserProfile { peer_id } => {
                 match self.store.get_profile(&peer_id) {
                     Ok(profile) => {
+                        if profile.is_none() {
+                             // Attempt to discover peer on network
+                             println!("Profile not found locally, querying network for {}", peer_id);
+                             if let Ok(pid) = peer_id.parse::<PeerId>() {
+                                  self.swarm.behaviour_mut().kad.get_closest_peers(pid.to_bytes());
+                             }
+                        }
                         let _ = self.event_tx.send(AppEvent::UserProfileFetched(profile));
                     }
                     Err(e) => {

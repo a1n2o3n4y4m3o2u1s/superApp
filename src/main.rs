@@ -140,9 +140,22 @@ fn App() -> Element {
                 println!("UI Received event: {:?}", event);
                 match event {
                     AppEvent::MessageReceived(node, content) => {
+                        let author = node.author.clone();
+                        if !peers.read().contains(&author) {
+                             peers.write().insert(author);
+                        }
                         messages.write().push((node, content));
                     }
                     AppEvent::MessagesFetched(msgs) => {
+                        // Also ensure we know about these peers
+                        let mut peers_write = peers.write();
+                        for (msg, _) in &msgs {
+                             if !peers_write.contains(&msg.author) {
+                                 peers_write.insert(msg.author.clone());
+                             }
+                             // We should also check recipients? 
+                             // Recipient is in payload. But maybe overkill for now.
+                        }
                         *messages.write() = msgs;
                     }
                     AppEvent::PeerDiscovered(peer) => {

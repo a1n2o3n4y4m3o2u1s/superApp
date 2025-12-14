@@ -1,7 +1,7 @@
 use libp2p::{
     gossipsub, request_response, kad,
     swarm::{NetworkBehaviour, Swarm},
-    PeerId,
+    Multiaddr, PeerId,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use libp2p::mdns;
@@ -10,6 +10,15 @@ use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+
+/// IPFS public bootstrap nodes for global DHT discovery
+#[cfg(not(target_arch = "wasm32"))]
+pub const BOOTSTRAP_NODES: [&str; 4] = [
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+    "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockRequest {
@@ -120,10 +129,28 @@ pub fn create_swarm(keypair: libp2p::identity::Keypair) -> Result<Swarm<MyBehavi
                 request_response::Config::default(),
             );
 
-            // Kademlia
+            // Kademlia with bootstrap nodes
             let store = kad::store::MemoryStore::new(PeerId::from(key.public()));
-            let kad_config = kad::Config::default();
-            let kad = kad::Behaviour::with_config(PeerId::from(key.public()), store, kad_config);
+            let mut kad_config = kad::Config::default();
+            kad_config.set_protocol_names(vec![libp2p::StreamProtocol::new("/superapp/kad/1.0.0")]);
+            let mut kad = kad::Behaviour::with_config(PeerId::from(key.public()), store, kad_config);
+            
+            // Add IPFS bootstrap nodes to Kademlia routing table
+            for addr_str in BOOTSTRAP_NODES.iter() {
+                if let Ok(addr) = addr_str.parse::<Multiaddr>() {
+                    // Extract peer ID from multiaddr
+                    if let Some(peer_id) = addr.iter().find_map(|p| {
+                        if let libp2p::multiaddr::Protocol::P2p(peer_id) = p {
+                            Some(peer_id)
+                        } else {
+                            None
+                        }
+                    }) {
+                        kad.add_address(&peer_id, addr.clone());
+                        println!("Added bootstrap node: {}", peer_id);
+                    }
+                }
+            }
 
             MyBehaviour {
                 mdns,

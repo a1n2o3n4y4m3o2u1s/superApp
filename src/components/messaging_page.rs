@@ -40,7 +40,8 @@ pub fn MessagingComponent() -> Element {
     use_effect(move || {
         let t = target_effect.clone();
         if !t.is_empty() {
-             let _ = cmd_tx_effect.send(AppCmd::FetchMessages { peer_id: t });
+             let _ = cmd_tx_effect.send(AppCmd::FetchMessages { peer_id: t.clone() });
+             let _ = cmd_tx_effect.send(AppCmd::FetchUserProfile { peer_id: t });
         }
     });
 
