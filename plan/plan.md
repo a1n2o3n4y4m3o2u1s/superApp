@@ -1,269 +1,286 @@
-# 🚀 MASTER BUILD PLAN – P2P SUPERAPP (7-PAGE + SOCIAL UPGRADE)
+## 🧠 NEW CORE PRINCIPLE
 
-## ✅ IMPLEMENTATION STATUS (UPDATED)
+> **SuperWeb is the app. Everything else is a module rendered inside it.**
 
-[x] 7-page app structure (Home, Local, Web, Market, Govern, Messages, Profile)
-[x] Founder tracking (1–100 with Founder badge)
-[x] Basic P2P networking (libp2p + DHT)
-[x] Geohash system with IP auto-detection
-[x] E2E encrypted messaging
-[x] Token + UBI system with countdown timer
-[x] PoH verification system (for User 101+)
-[x] Storage engine (10-holder replication)
-[x] SuperWeb core (`sp://` hosting + browsing + SNS)
-[x] Media streaming (P2P video/audio)
-[x] Advanced geohash (precision, local feed)
-[x] Marketplace (P2P trading)
-[x] Smart contracts (local execution)
-[x] Citizen proposal foundation (draft + 1% signatures)
-[x] 1-human-1-vote system (UHT)
-[x] Barebones ministry election system
-[x] Governance portal (`sp://gov.super`)
-[x] SuperWeb search
-[x] Advanced marketplace features
-[x] WASM dynamic site uploads
-[ ] Mobile support (iOS/Android)
-[ ] Web client (WASM)
-[x] File sharing
-[x] Group chats
-[/] Reputation system
-[x] Decentralized moderation
-[x] Recall & oversight mechanisms
-[x] Transparency dashboard
-[x] Emergency proposal pathway (5%)
-[x] Full SuperWeb search + dynamic WASM sites
-[ ] First citizen proposals (ministry system, tax rate)
-[/] Citizen proposal system (direct democracy layer)
-[x] Citizen power dashboard (profile)
-[x] Instagram-style social system (posts, stories, social graph, media feed)
+No redirects. No context switching. No “different apps.”
 
 ---
 
-## 📋 CORE RULES (UNCHANGED)
+## 🌐 SUPERWEB-FIRST ARCHITECTURE (UPDATED)
 
-1. No central servers
-2. No blockchain
-3. No hierarchy
-4. Users 1–100 instant access
-5. Users 101+ mandatory PoH before entry
-6. Geohashed chat + discovery
-7. Global discovery
-8. Built-in P2P web
-9. Multi-platform
-10. 1 human = 1 vote
+### Single Entry Point
 
----
+```
+sp://super.app
+```
 
-## 📱 7-PAGE APP STRUCTURE (UPDATED)
+This is the **only “homepage.”**
 
-### 1. Home (Global Social Feed + Instagram Core)
+All functionality loads as **internal SuperWeb modules**:
 
-* Infinite media feed (photos, short videos, text)
-* Likes, comments, reposts
-* Stories (24h encrypted media)
-* Friends + following
-* Algorithm-free chronological + trending toggle
-* Global proposal banners + signature drives
+* Social
+* Local
+* Governance
+* Market
+* Education
+* Messages
+* Profile
+
+Rendered via WASM components inside the SuperWeb shell.
 
 ---
 
-### 2. Local (Geohash)
+## 🧩 MODULED APP STRUCTURE (CONSOLIDATED)
 
-* Auto country placement
-* Local feed + local stories
-* Nearby users
-* Location chat
+### 1. 🏠 Home Module — Global Social Layer (PRIMARY FEED)
+
+**This replaces the old “Home” page.**
+
+**Behavior:**
+
+* Shows **all posts from all geohashes**
+* Chronological by default
+* Optional filters:
+
+  * Global
+  * My geohash
+  * Followed users
+  * Topics / tags
+
+**Posting logic (critical change):**
+
+* Posts created here are **Global Posts**
+* Global Posts:
+
+  * Appear in Home feed
+  * Appear in **every relevant geohash feed**
+  * Are **byte-identical and synchronized**
+  * No duplication, no forks
+
+Geohash feeds are now **filtered views of the same global dataset**, not separate systems.
+
+---
+
+### 2. 📍 Local Module — Geohash Views (FILTER, NOT SEPARATE SYSTEM)
+
+**Local is no longer a separate universe.**
+
+It is a **contextual filter** on global data:
+
+* Local social feed (subset of global posts)
+* Local stories
+* Local chats
 * Local proposals
-* Local trading + events
-* Offline mesh chat
+* Local marketplace listings
+* Local SuperWeb portals (`sp://[geohash].super`)
+
+Offline mesh chat remains intact.
 
 ---
 
-### 3. Web (SuperWeb)
+### 3. 🌐 SuperWeb Module — Web, Apps, and Hosting (CORE)
 
-* `sp://` + normal web
-* User-hosted websites
-* Governance portal
-* Proposal drafting studio
-* SuperWeb search
-* Personal `[username].super` sites
+SuperWeb now **contains everything**:
+
+* Social feeds
+* Governance dashboards
+* Market listings
+* Education portals
+* Messages
+* User profiles
+
+**Capabilities:**
+
+* `sp://` browsing
+* `.super` domains
+* User-hosted WASM apps
+* Internal routing (no redirects)
+* Embedded governance + voting UIs
+* Embedded education & certification UIs
 
 ---
 
-### 4. Market (Economy)
+### 4. 🏛 Govern Module — Direct Democracy (Embedded)
 
-* P2P goods & services
-* Digital products
-* Storage leasing
-* Hosting payments
-* Service contracts
-* SUPER token payments only
-
----
-
-### 5. Govern (Direct Democracy)
+Rendered inside SuperWeb:
 
 * Proposal drafting
-* Proposal discovery
 * Signature collection
-* Active voting
-* Delegation control
-* Execution tracking
-* Ministry transparency
-* Recall voting
+* Voting
+* Delegation
+* Ministry dashboards
+* Recall mechanisms
+* Transparency reports
+
+Education certifications (see below) can gate **participation types**, not voting rights.
 
 ---
 
-### 6. Messages
+### 5. 💰 Market Module — Economy + Services
 
-* Encrypted DMs
-* Group chats
-* P2P voice + video
-* File sharing
-* Disappearing messages
-* Encrypted organizing channels
+Integrated tightly with Education:
 
----
-
-### 7. Profile
-
-* Wallet + UBI timer
-* Reputation + badges
-* Identity + UHT status
-* Citizen dashboard
-* SuperWeb hosting manager
-* Social stats (followers, friends)
-* Privacy + delegation settings
-
----
-
-## 📸 INSTAGRAM-STYLE SOCIAL SYSTEM (FULLY DECENTRALIZED)
-
-* Photo posts
-* Video posts
-* Stories (24h auto-expire)
-* Highlights (saved stories)
-* Friends + followers
-* Profile grids
-* Media filters (local processing only)
-* Comments + threaded replies
-* Likes + reposts
-* Social discovery via geohash + tags
-* Encrypted private stories (friends-only)
-* Content replicated under 10-holder rule
-* Creator rewards via SUPER
-
----
-
-## 🏛 GOVERNANCE (UNCHANGED LOGIC)
-
-* 1 UHT = 1 vote
-* 1% signatures → ballot
-* 7-day standard vote
-* 5% emergency vote
-* 2% recall trigger
-* Citizens set tax, UBI, and ministry structure
-
----
-
-## 🌍 GEOHASH (UNCHANGED CORE)
-
-* GPS → IP → Global fallback
-* Auto chat placement
-* Precision control
-* Ghost mode
-* Local proposals
-* Local `sp://` portals
-
----
-
-## 🌐 SUPERWEB (UNCHANGED CORE)
-
-* `sp://` protocol
-* `.super` naming
-* User hosting
-* DHT indexing
-* Micropayments
-* WASM execution
-* Community portals
-
----
-
-## 💾 STORAGE
-
-* 10-holder replication for:
-
-  * Posts
-  * Stories
-  * Messages
-  * Files
-  * Websites
-  * Proposals
-  * Votes
-
----
-
-## 💰 TOKEN ECONOMY
-
-SUPER used for:
-
-* Market
-* Storage
+* Goods & services
+* Digital products
 * Hosting
-* Boosting content
-* Web access fees
-
-UBI:
-
-* 10 SUPER/day per verified user
-
-SUPER never affects voting.
+* Storage leasing
+* **Certified services** (see Education)
+* SUPER-only payments
 
 ---
 
-## 🔐 SECURITY
+### 6. 💬 Messages Module
 
-* E2E for all messages
-* Encrypted stories + posts
-* ZK private voting
-* Jury moderation
-* PoH Sybil protection
-* Sandboxed `sp://` execution
+Unchanged technically, but now:
+
+* Accessed via SuperWeb overlay
+* Context-aware (local, governance, education groups)
 
 ---
 
-## ⚠️ ABSOLUTE REQUIREMENTS (STILL BINDING)
+### 7. 👤 Profile Module — Identity Hub
 
-1. Founder instant access
-2. User 101+ hard PoH gate
-3. 7-page structure mandatory
-4. IP auto-geohash required
-5. No servers, no blockchain
-6. Equal rights after verification
-7. Built-in P2P web
-8. E2E everything
-9. 1-human-1-vote only
-10. Citizen-driven policy
-11. Ministries execute only
+Single unified dashboard:
+
+* Wallet + UBI
+* Reputation
+* Badges & certifications
+* Governance participation
+* Hosting manager
+* Privacy controls
 
 ---
 
-## 🎯 UPDATED BUILDER START ORDER
+## 🎓 NEW: EDUCATION & CERTIFICATION SYSTEM (FULL DESIGN)
 
-1. 7-page layout
-2. Founder tracking
-3. Geohash IP placement
-4. PoH gate for 101+
-5. Profile UBI timer
-6. SuperWeb browser
-7. Instagram-style feed + stories
-8. Citizen voting + proposals
+### Purpose
+
+To enable **skill verification, civic competence, and service trust** without hierarchy or central authority.
+
+### Structure
+
+#### 📚 Education Portals (SuperWeb-native)
+
+* Hosted as `sp://edu.*.super`
+* Anyone can create a curriculum
+* Content types:
+
+  * Courses
+  * Reading lists
+  * Simulations
+  * Civic training
+  * Technical training
+
+#### 🧪 Certification Mechanism
+
+* Exams are:
+
+  * Peer-reviewed
+  * Open-source
+  * Deterministic
+* Certification issuance:
+
+  * Requires quorum of certified peers
+  * Cryptographically signed
+  * Stored in profile (non-transferable)
+
+#### 🏷 Certification Types
+
+* Civic literacy
+* Governance roles
+* Technical skills
+* Trade qualifications
+* Moderation / jury eligibility
 
 ---
 
-If you want, I can now also generate:
+### 🔗 Integration Points
 
-* A wireframe map for all 7 pages
-* A pure Instagram-only decentralized spec
-* A stripped MVP for just Home + Local + Messages + Govern
-* Or a dev milestone roadmap by month.
+**Profile**
+
+* [x] Certifications displayed as badges
+
+**Market**
+
+* [x] Services can require certifications
+* [x] Buyers can filter by certified providers
+
+**Governance**
+
+* Certifications can:
+
+  * [x] Gate proposal authorship types (Constitutional amendments etc.)
+  * [x] Gate ministry execution roles (Candidacy)
+* **Never gate voting**
+
+**Reputation**
+
+* Certifications enhance trust, not power
+
+---
+
+## 🧠 SOCIAL SYSTEM (UPDATED LOGIC)
+
+* One unified post object
+* Tagged with:
+
+  * Author
+  * Timestamp
+  * Geohash scope(s)
+  * Topic tags
+
+Feeds are **queries**, not silos.
+
+Replication still follows the 10-holder rule.
+
+---
+
+## 📐 PAGE COUNT REDUCTION (RESULT)
+
+**Before:**
+7 hard pages + subpages
+
+**After:**
+1 SuperWeb shell + 7 logical modules rendered internally
+
+This dramatically simplifies UX without reducing capability.
+
+---
+
+## 🧱 CORE RULES — STILL ENFORCED
+
+Unchanged and intact:
+
+* No servers
+* No blockchain
+* No hierarchy
+* PoH gate for users 101+
+* 1 human = 1 vote
+* Equal rights after verification
+* E2E encryption everywhere
+* Citizen-driven governance
+* Ministries execute only
+
+---
+
+## ✅ IMPLEMENTATION PROGRESS
+
+### Completed Modules
+
+| Module | Status | Features |
+|--------|--------|----------|
+| 🏠 Home | ✅ Done | Social feed, posts, likes, comments, stories, follow/unfollow |
+| 📍 Local | ✅ Done | Geohash filtering, local feed |
+| 🌐 SuperWeb | ✅ Done | Browser, sp:// protocol, WASM hosting |
+| 🏛 Govern | ✅ Done | Proposals, voting, elections, recalls, oversight, ministries |
+| 💰 Market | ✅ Done | Listings, marketplace |
+| 💬 Messages | ✅ Done | E2E encrypted messaging, groups |
+| 👤 Profile | ✅ Done | Identity, wallet, UBI, files, reputation |
+| 🎓 Education | ✅ Done | Courses, exams, exam-taking, certifications |
+
+### Latest Updates
+
+- **2025-12-13**: Refactored to SuperWeb-first navigation - removed top tabs, created wiki homepage with pinned apps and community pages
+- **2025-12-13**: Completed exam-taking functionality with `ExamTakingModal`, score calculation, and result display
+- **2025-12-13**: Refined Education UI with `CourseDetailComponent` and `CreateExamForm` for better course authoring and viewing experience
+- **2025-12-13**: Implemented Certification Gating for Governance (Proposals & Candidacy) requiring specific certifications.

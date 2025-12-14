@@ -16,13 +16,6 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
     let mut recipient_id = use_signal(|| "".to_string());
     let mut amount = use_signal(|| "".to_string());
     
-    // Contract state
-    let mut show_new_contract = use_signal(|| false);
-    let mut contract_code = use_signal(|| "".to_string());
-    let mut contract_init_params = use_signal(|| "".to_string());
-    let mut active_call_contract = use_signal(|| None::<String>);
-    let mut call_method = use_signal(|| "".to_string());
-    let mut call_params = use_signal(|| "".to_string());
 
     // Tabs
     let mut active_tab = use_signal(|| "info".to_string());
@@ -98,13 +91,15 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
             let _ = cmd_tx_fetch.send(AppCmd::FetchBalance);
             let _ = cmd_tx_fetch.send(AppCmd::FetchPendingTransfers);
             let _ = cmd_tx_fetch.send(AppCmd::FetchUbiTimer);
-            let _ = cmd_tx_fetch.send(AppCmd::FetchContracts);
+            let _ = cmd_tx_fetch.send(AppCmd::FetchStorageStats);
             let _ = cmd_tx_fetch.send(AppCmd::FetchMyWebPages);
             let _ = cmd_tx_fetch.send(AppCmd::FetchMyFiles);
             let _ = cmd_tx_fetch.send(AppCmd::FetchReputation { peer_id: target_id_fetch.clone() });
+            let _ = cmd_tx_fetch.send(AppCmd::FetchMyCertifications);
         } else {
             let _ = cmd_tx_fetch.send(AppCmd::FetchUserProfile { peer_id: target_id_fetch.clone() });
             let _ = cmd_tx_fetch.send(AppCmd::FetchReputation { peer_id: target_id_fetch.clone() });
+            let _ = cmd_tx_fetch.send(AppCmd::FetchCertifications { peer_id: target_id_fetch.clone() });
         }
         // Always fetch posts for the profile we are viewing
         let _ = cmd_tx_fetch.send(AppCmd::FetchGivenUserPosts { peer_id: target_id_fetch.clone() });
@@ -194,16 +189,7 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
         let _ = cmd_tx_follow.send(AppCmd::FollowUser { target: target_id_follow.clone(), follow: !is_following });
     };
 
-    let cmd_tx_deploy = cmd_tx.clone();
-    let on_deploy = move |_| {
-        let _ = cmd_tx_deploy.send(AppCmd::DeployContract { 
-            code: contract_code(), 
-            init_params: contract_init_params() 
-        });
-        show_new_contract.set(false);
-        contract_code.set("".to_string());
-        contract_init_params.set("".to_string());
-    };
+
 
 
 
@@ -296,8 +282,55 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                                 span { class: "badge badge-founder", "Founder #{fid}" }
                             }
                         }
-                        div { class: "card",
+                        div { class: "card mb-4",
                             p { class: "font-mono text-sm break-all text-[var(--text-primary)]", "{target_id}" }
+                        }
+                        
+                        // Certifications Badge Display
+                        {
+                            let certs = app_state.certifications.read();
+                            if !certs.is_empty() {
+                                rsx! {
+                                    div { class: "border-t border-[var(--border-subtle)] pt-4 mt-2",
+                                        p { class: "text-sm font-bold mb-2 flex items-center gap-2", "🏆 Certifications" }
+                                        div { class: "flex flex-wrap gap-2",
+                                            for node in certs.iter() {
+                                                if let crate::backend::dag::DagPayload::Certification(c) = &node.payload {
+                                                    {
+                                                        let type_str = format!("{:?}", c.certification_type);
+                                                        // Pretty print enum variants
+                                                        let display_str = match type_str.as_str() {
+                                                            "CivicLiteracy" => "Civic Literacy",
+                                                            "GovernanceRoles" => "Governance Roles",
+                                                            "TechnicalSkills" => "Technical Skills",
+                                                            "TradeQualifications" => "Trade Qualifications",
+                                                            "ModerationJury" => "Jury Qualified",
+                                                            _ => &type_str,
+                                                        };
+                                                        let icon = match type_str.as_str() {
+                                                            "CivicLiteracy" => "📜",
+                                                            "GovernanceRoles" => "⚖️",
+                                                            "TechnicalSkills" => "💻",
+                                                            "TradeQualifications" => "🛠️",
+                                                            "ModerationJury" => "🧑‍⚖️",
+                                                            _ => "🏅",
+                                                        };
+                                                        
+                                                        rsx! {
+                                                            div { class: "px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border-color)] text-xs flex items-center gap-1",
+                                                                span { "{icon}" }
+                                                                span { "{display_str}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                rsx!({})
+                            }
                         }
                     }
 
@@ -441,17 +474,26 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                             // Pending transfers
                             if !pending_transfers.is_empty() {
                                 div { class: "divider" }
-                                p { class: "font-medium mb-2", "Pending Transfers" }
+                                p { class: "font-medium mb-2", "Incoming Transfers" }
                                 for node in pending_transfers.iter() {
                                     if let crate::backend::dag::DagPayload::Token(ref t) = node.payload {
                                         {
                                             let amt = t.amount;
-                                            let recip = t.target.clone().unwrap_or_default();
+                                            let sender = node.author.clone();
+                                            let burn_cid = node.id.clone();
+                                            let cmd_tx_claim = cmd_tx.clone();
                                             rsx! {
-                                                div { class: "list-item",
+                                                div { class: "list-item flex justify-between items-center",
                                                     div { class: "list-item-content",
                                                         p { class: "list-item-title", "{amt} SUPER" }
-                                                        p { class: "list-item-subtitle truncate", "To: {recip}" }
+                                                        p { class: "list-item-subtitle truncate", "From: {sender.get(0..12).unwrap_or(&sender)}..." }
+                                                    }
+                                                    button { 
+                                                        class: "btn btn-success btn-sm",
+                                                        onclick: move |_| { 
+                                                            let _ = cmd_tx_claim.send(AppCmd::ClaimToken { burn_cid: burn_cid.clone() }); 
+                                                        },
+                                                        "Claim"
                                                     }
                                                 }
                                             }
@@ -461,104 +503,92 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                             }
                         }
 
-                        // Smart Contracts
+                        // Storage Stats - Device storage info
                         div { class: "panel",
                             div { class: "panel-header",
-                                h2 { class: "panel-title", "Smart Contracts" }
-                                button { 
-                                    class: "btn btn-sm btn-secondary",
-                                    onclick: move |_| show_new_contract.set(!show_new_contract()),
-                                    if show_new_contract() { "Cancel" } else { "+ Deploy" }
-                                }
-                            }
-
-                            if show_new_contract() {
-                                div { class: "card mb-4",
-                                    div { class: "form-group",
-                                        label { class: "form-label", "Contract Code (JSON)" }
-                                        textarea {
-                                            class: "input",
-                                            style: "min-height: 120px; font-family: monospace;",
-                                            placeholder: "Enter contract code JSON...",
-                                            value: "{contract_code}",
-                                            oninput: move |e| contract_code.set(e.value())
+                                h2 { class: "panel-title", "📊 Device Storage" }
+                                {
+                                    let cmd_tx_storage = cmd_tx.clone();
+                                    rsx! {
+                                        button { 
+                                            class: "btn btn-sm btn-secondary",
+                                            onclick: move |_| {
+                                                let _ = cmd_tx_storage.send(AppCmd::FetchStorageStats);
+                                            },
+                                            "Refresh"
                                         }
                                     }
-                                    div { class: "form-group",
-                                        label { class: "form-label", "Init Params (JSON)" }
-                                        input {
-                                            class: "input",
-                                            placeholder: "(empty JSON)",
-                                            value: "{contract_init_params}",
-                                            oninput: move |e| contract_init_params.set(e.value())
-                                        }
-                                    }
-                                    button { class: "btn btn-primary", onclick: on_deploy, "Deploy Contract" }
                                 }
                             }
-
-                            if contracts.is_empty() {
-                                div { class: "empty-state py-4",
-                                    p { class: "empty-state-text", "No contracts deployed yet" }
-                                }
-                            } else {
-                                for node in contracts.iter() {
-                                    {
-                                        let nid = node.id.clone();
-                                        let nid2 = node.id.clone();
-                                        let cmd_tx_clone = cmd_tx.clone();
-                                        let state_display = contract_states.get(&node.id).cloned();
-                                        let is_active = active_call_contract() == Some(node.id.clone());
-                                        rsx! {
-                                            div { class: "card mb-2",
-                                                p { class: "font-mono text-xs truncate mb-2", "{nid}" }
-                                                if let Some(st) = state_display {
-                                                    pre { class: "text-xs bg-[var(--bg-elevated)] p-2 rounded overflow-x-auto mb-2", "{st}" }
-                                                }
-                                                if is_active {
-                                                    div { class: "space-y-2 mt-2",
-                                                        input {
-                                                            class: "input",
-                                                            placeholder: "Method (set/delete)",
-                                                            value: "{call_method}",
-                                                            oninput: move |e| call_method.set(e.value())
-                                                        }
-                                                        input {
-                                                            class: "input",
-                                                            placeholder: "Params JSON",
-                                                            value: "{call_params}",
-                                                            oninput: move |e| call_params.set(e.value())
-                                                        }
-                                                        button {
-                                                            class: "btn btn-primary btn-sm",
-                                                            onclick: move |_| {
-                                                                if let Some(cid) = active_call_contract() {
-                                                                    let _ = cmd_tx_clone.send(AppCmd::CallContract {
-                                                                        contract_id: cid,
-                                                                        method: call_method(),
-                                                                        params: call_params()
-                                                                    });
-                                                                    active_call_contract.set(None);
-                                                                    call_method.set("".to_string());
-                                                                    call_params.set("".to_string());
-                                                                }
-                                                            },
-                                                            "Execute"
-                                                        }
-                                                    }
+                            {
+                                let stats = app_state.storage_stats.read();
+                                rsx! {
+                                    div { class: "grid grid-cols-2 gap-4",
+                                        div { class: "card text-center",
+                                            p { class: "text-3xl font-bold text-[var(--primary)]", "{stats.0}" }
+                                            p { class: "text-sm text-[var(--text-secondary)]", "Total Nodes" }
+                                        }
+                                        div { class: "card text-center",
+                                            {
+                                                let size_mb = stats.1 as f64 / 1024.0 / 1024.0;
+                                                let size_display = if size_mb >= 1.0 {
+                                                    format!("{:.2} MB", size_mb)
                                                 } else {
-                                                    button {
-                                                        class: "btn btn-sm btn-secondary",
-                                                        onclick: move |_| active_call_contract.set(Some(nid2.clone())),
-                                                        "Call Method"
-                                                    }
+                                                    format!("{:.2} KB", stats.1 as f64 / 1024.0)
+                                                };
+                                                rsx! {
+                                                    p { class: "text-3xl font-bold text-[var(--accent)]", "{size_display}" }
+                                                    p { class: "text-sm text-[var(--text-secondary)]", "Storage Used" }
                                                 }
                                             }
                                         }
                                     }
+                                    
+                                    // Storage Quota Setting
+                                    div { class: "mt-4 pt-4 border-t border-[var(--border-subtle)]",
+                                        p { class: "text-sm font-medium text-[var(--text-primary)] mb-2", "Storage Quota (optional)" }
+                                        div { class: "flex gap-2 flex-wrap",
+                                            {
+                                                let cmd_tx_q1 = cmd_tx.clone();
+                                                let cmd_tx_q2 = cmd_tx.clone();
+                                                let cmd_tx_q3 = cmd_tx.clone();
+                                                let cmd_tx_q4 = cmd_tx.clone();
+                                                rsx! {
+                                                    button {
+                                                        class: "btn btn-sm btn-secondary",
+                                                        onclick: move |_| { let _ = cmd_tx_q1.send(AppCmd::SetStorageQuota { quota_mb: None }); },
+                                                        "Unlimited"
+                                                    }
+                                                    button {
+                                                        class: "btn btn-sm btn-secondary",
+                                                        onclick: move |_| { let _ = cmd_tx_q2.send(AppCmd::SetStorageQuota { quota_mb: Some(500) }); },
+                                                        "500 MB"
+                                                    }
+                                                    button {
+                                                        class: "btn btn-sm btn-secondary",
+                                                        onclick: move |_| { let _ = cmd_tx_q3.send(AppCmd::SetStorageQuota { quota_mb: Some(1024) }); },
+                                                        "1 GB"
+                                                    }
+                                                    button {
+                                                        class: "btn btn-sm btn-secondary",
+                                                        onclick: move |_| { let _ = cmd_tx_q4.send(AppCmd::SetStorageQuota { quota_mb: Some(5120) }); },
+                                                        "5 GB"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        p { class: "text-xs text-[var(--text-muted)] mt-2",
+                                            "Default: Unlimited. Quota only affects local storage, not network replication."
+                                        }
+                                    }
+                                    
+                                    p { class: "text-xs text-[var(--text-muted)] mt-4 text-center",
+                                        "DAG storage on this device. Data is replicated across network peers."
+                                    }
                                 }
                             }
                         }
+
 
                         // SuperWeb Pages
                         div { class: "panel",

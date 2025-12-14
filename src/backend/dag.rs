@@ -92,6 +92,20 @@ pub enum DagPayload {
     Story(StoryPayload),
     #[serde(rename = "follow:v1")]
     Follow(FollowPayload),
+    // Education System
+    #[serde(rename = "course:v1")]
+    Course(CoursePayload),
+    #[serde(rename = "exam:v1")]
+    Exam(ExamPayload),
+    #[serde(rename = "exam_submission:v1")]
+    ExamSubmission(ExamSubmissionPayload),
+    #[serde(rename = "certification:v1")]
+    Certification(CertificationPayload),
+    // Verification Application System
+    #[serde(rename = "application:v1")]
+    Application(ApplicationPayload),
+    #[serde(rename = "application_vote:v1")]
+    ApplicationVote(ApplicationVotePayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,6 +188,7 @@ pub struct ListingPayload {
     pub description: String,
     pub price: u64, // SUPER tokens
     pub image_cid: Option<String>,
+    pub category: Option<String>,
     pub status: ListingStatus,
     pub ref_cid: Option<String>, // Reference to the original listing CID if this is an update
 }
@@ -185,10 +200,21 @@ pub enum ListingStatus {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum ContractStatus {
+    #[default]
+    Pending,   // Awaiting counterparty acceptance
+    Active,    // Both parties agreed
+    Completed, // Fulfilled
+    Rejected,  // Counterparty rejected
+    Cancelled, // Creator cancelled
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContractPayload {
     pub code: String, // Source code or WASM hex
     pub init_params: String, // JSON string
+    pub status: ContractStatus, // Lifecycle status
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -313,6 +339,81 @@ pub struct RecallPayload {
 pub struct RecallVotePayload {
     pub recall_id: String, // CID of the recall node
     pub vote: bool, // true = remove, false = keep
+}
+
+// ============ EDUCATION SYSTEM ============
+
+/// A course curriculum that anyone can publish
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CoursePayload {
+    pub title: String,
+    pub description: String,
+    pub content: String, // Markdown/HTML content
+    pub category: CourseCategory,
+    pub exam_id: Option<String>, // Optional CID of the associated exam
+    pub prerequisites: Vec<String>, // CIDs of prerequisite certifications
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CourseCategory {
+    CivicLiteracy,
+    GovernanceRoles,
+    TechnicalSkills,
+    TradeQualifications,
+    ModerationJury,
+    Custom(String),
+}
+
+/// An exam that can be taken to earn certification
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExamPayload {
+    pub title: String,
+    pub course_id: Option<String>, // Associated course CID
+    pub questions: Vec<ExamQuestion>,
+    pub passing_score: u8, // Minimum percentage to pass (0-100)
+    pub certification_type: String, // The cert type this exam grants
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExamQuestion {
+    pub question: String,
+    pub options: Vec<String>,
+    pub correct_answer_hash: String, // SHA256 of correct option index (for verification)
+}
+
+/// User's submission for an exam
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExamSubmissionPayload {
+    pub exam_id: String, // CID of the exam
+    pub answers: Vec<usize>, // Indices of selected options
+    pub score: u8, // Calculated score percentage
+    pub passed: bool,
+}
+
+/// A certification issued to a user by peer consensus
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CertificationPayload {
+    pub recipient: String, // Hex pubkey of the certified user
+    pub certification_type: String, // e.g., "CivicLiteracy", "ModeratorEligible"
+    pub exam_id: Option<String>, // CID of the exam passed
+    pub issuer_signatures: Vec<String>, // Signatures from certified peers
+    pub issued_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Join application submitted by new users seeking verification
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApplicationPayload {
+    pub name: String,
+    pub bio: String,
+    pub photo_cid: Option<String>, // CID of uploaded selfie/photo
+}
+
+/// Vote on a join application by a verified user
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApplicationVotePayload {
+    pub application_id: String, // CID of the application node
+    pub approve: bool, // true = approve, false = reject
 }
 
 impl DagNode {

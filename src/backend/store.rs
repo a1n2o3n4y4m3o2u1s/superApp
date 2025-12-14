@@ -9,6 +9,14 @@ use crate::backend::dag::{DagNode, DagPayload};
 use serde_json;
 use chrono::{Utc, Duration};
 
+/// Storage statistics for UI display
+#[derive(Debug, Clone)]
+pub struct StorageStats {
+    pub total_nodes: usize,
+    pub total_bytes: usize,
+    pub nodes_by_type: std::collections::HashMap<String, i64>,
+}
+
 #[derive(Clone)]
 pub struct Store {
     #[cfg(not(target_arch = "wasm32"))]
@@ -36,6 +44,45 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS heads (
                 public_key TEXT PRIMARY KEY,
                 cid TEXT
+            )",
+            [],
+        )?;
+
+        // Metadata table for faster indexed queries (avoids parsing all JSON)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS blocks_meta (
+                id TEXT PRIMARY KEY,
+                author TEXT NOT NULL,
+                node_type TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                target TEXT,
+                FOREIGN KEY(id) REFERENCES blocks(id)
+            )",
+            [],
+        )?;
+
+        // Create indexes for common query patterns
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_author ON blocks_meta(author)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_type ON blocks_meta(node_type)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_timestamp ON blocks_meta(timestamp)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_target ON blocks_meta(target)", [])?;
+
+        // Separate blob storage table - offloads large binary data from DAG nodes
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS blobs (
+                cid TEXT PRIMARY KEY,
+                data BLOB NOT NULL,
+                size INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        // Settings table for storage configuration
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )",
             [],
         )?;
@@ -92,6 +139,15 @@ impl Store {
                 "INSERT OR REPLACE INTO blocks (id, data) VALUES (?1, ?2)",
                 params![node.id, data],
             )?;
+
+            // Also insert/update metadata for indexed queries
+            let node_type = Self::get_node_type(&node.payload);
+            let target = Self::get_node_target(&node.payload);
+            let timestamp = node.timestamp.timestamp();
+            conn.execute(
+                "INSERT OR REPLACE INTO blocks_meta (id, author, node_type, timestamp, target) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![node.id, node.author, node_type, timestamp, target],
+            )?;
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -101,6 +157,59 @@ impl Store {
         }
 
         Ok(())
+    }
+
+    /// Extract node type string for metadata indexing
+    fn get_node_type(payload: &DagPayload) -> &'static str {
+        match payload {
+            DagPayload::Profile(_) => "profile",
+            DagPayload::Post(_) => "post",
+            DagPayload::Proof(_) => "proof",
+            DagPayload::Message(_) => "message",
+            DagPayload::Group(_) => "group",
+            DagPayload::Token(_) => "token",
+            DagPayload::Web(_) => "web",
+            DagPayload::Name(_) => "name",
+            DagPayload::Blob(_) => "blob",
+            DagPayload::Listing(_) => "listing",
+            DagPayload::Contract(_) => "contract",
+            DagPayload::ContractCall(_) => "contract_call",
+            DagPayload::Proposal(_) => "proposal",
+            DagPayload::Vote(_) => "vote",
+            DagPayload::Candidacy(_) => "candidacy",
+            DagPayload::CandidacyVote(_) => "candidacy_vote",
+            DagPayload::Report(_) => "report",
+            DagPayload::File(_) => "file",
+            DagPayload::Recall(_) => "recall",
+            DagPayload::RecallVote(_) => "recall_vote",
+            DagPayload::OversightCase(_) => "oversight_case",
+            DagPayload::JuryVote(_) => "jury_vote",
+            DagPayload::Comment(_) => "comment",
+            DagPayload::Like(_) => "like",
+            DagPayload::Story(_) => "story",
+            DagPayload::Follow(_) => "follow",
+            DagPayload::Course(_) => "course",
+            DagPayload::Exam(_) => "exam",
+            DagPayload::ExamSubmission(_) => "exam_submission",
+            DagPayload::Certification(_) => "certification",
+            DagPayload::Application(_) => "application",
+            DagPayload::ApplicationVote(_) => "application_vote",
+        }
+    }
+
+    /// Extract target ID for metadata indexing (recipient, target post, etc.)
+    fn get_node_target(payload: &DagPayload) -> Option<String> {
+        match payload {
+            DagPayload::Message(m) => Some(m.recipient.clone()),
+            DagPayload::Proof(p) => Some(p.target_pubkey.clone()),
+            DagPayload::Vote(v) => Some(v.proposal_id.clone()),
+            DagPayload::Comment(c) => Some(c.parent_id.clone()),
+            DagPayload::Like(l) => Some(l.target_id.clone()),
+            DagPayload::Follow(f) => Some(f.target.clone()),
+            DagPayload::ApplicationVote(av) => Some(av.application_id.clone()),
+            DagPayload::Token(t) => t.target.clone(),
+            _ => None,
+        }
     }
 
     pub fn get_node(&self, id: &str) -> Result<Option<DagNode>, Box<dyn std::error::Error>> {
@@ -194,6 +303,208 @@ impl Store {
         }
     }
 
+    /// Get storage statistics (total nodes, size in bytes by type)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_storage_stats(&self) -> Result<StorageStats, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        
+        // Total count and size
+        let total_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM blocks",
+            [],
+            |row| row.get(0),
+        )?;
+        
+        let total_bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM blocks",
+            [],
+            |row| row.get(0),
+        )?;
+
+        // Count by type from metadata
+        let mut stmt = conn.prepare("SELECT node_type, COUNT(*) FROM blocks_meta GROUP BY node_type")?;
+        let type_counts: std::collections::HashMap<String, i64> = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(StorageStats {
+            total_nodes: total_count as usize,
+            total_bytes: total_bytes as usize,
+            nodes_by_type: type_counts,
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_storage_stats(&self) -> Result<StorageStats, Box<dyn std::error::Error>> {
+        let blocks = self.blocks.lock().unwrap();
+        let total_bytes: usize = blocks.values().map(|v| v.len()).sum();
+        Ok(StorageStats {
+            total_nodes: blocks.len(),
+            total_bytes,
+            nodes_by_type: std::collections::HashMap::new(),
+        })
+    }
+
+    /// Prune expired stories (older than 24h) - optional cleanup
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn prune_expired_stories(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff = (Utc::now() - Duration::hours(24)).timestamp();
+        
+        // Delete from metadata first
+        let deleted_count: usize = conn.execute(
+            "DELETE FROM blocks_meta WHERE node_type = 'story' AND timestamp < ?1",
+            params![cutoff],
+        )?;
+        
+        // Delete orphaned blocks (stories that were pruned)
+        conn.execute(
+            "DELETE FROM blocks WHERE id IN (
+                SELECT b.id FROM blocks b 
+                LEFT JOIN blocks_meta m ON b.id = m.id 
+                WHERE m.id IS NULL
+            )",
+            [],
+        )?;
+        
+        Ok(deleted_count)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn prune_expired_stories(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        // No-op for wasm32
+        Ok(0)
+    }
+
+    // =========================================================================
+    // BLOB STORAGE METHODS
+    // =========================================================================
+
+    /// Store a blob separately from DAG nodes
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn put_blob(&self, cid: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT OR REPLACE INTO blobs (cid, data, size, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![cid, data, data.len() as i64, now],
+        )?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn put_blob(&self, _cid: &str, _data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(()) // No-op for wasm32
+    }
+
+    /// Retrieve a blob by CID
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_blob(&self, cid: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data FROM blobs WHERE cid = ?1")?;
+        let result = stmt.query_row(params![cid], |row| row.get::<_, Vec<u8>>(0));
+        match result {
+            Ok(data) => Ok(Some(data)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Box::new(e)),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_blob(&self, _cid: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        Ok(None) // No-op for wasm32
+    }
+
+    /// Get total blob storage size
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_blob_storage_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let size: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(size), 0) FROM blobs",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(size as usize)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_blob_storage_size(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        Ok(0)
+    }
+
+    // =========================================================================
+    // STORAGE QUOTA METHODS  
+    // =========================================================================
+
+    /// Get storage quota in bytes (None = unlimited)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_storage_quota(&self) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let result: Result<String, _> = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'storage_quota_bytes'",
+            [],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(val) => Ok(val.parse::<u64>().ok()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Box::new(e)),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_storage_quota(&self) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+        Ok(None)
+    }
+
+    /// Set storage quota in bytes (None = unlimited)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_storage_quota(&self, quota_bytes: Option<u64>) -> Result<(), Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        match quota_bytes {
+            Some(bytes) => {
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('storage_quota_bytes', ?1)",
+                    params![bytes.to_string()],
+                )?;
+            }
+            None => {
+                conn.execute("DELETE FROM settings WHERE key = 'storage_quota_bytes'", [])?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_storage_quota(&self, _quota_bytes: Option<u64>) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    /// Check storage quota status: (used_bytes, quota_bytes_or_none, usage_percent, is_over_quota)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn check_storage_quota(&self) -> Result<(usize, Option<u64>, u8, bool), Box<dyn std::error::Error>> {
+        let stats = self.get_storage_stats()?;
+        let blob_size = self.get_blob_storage_size()?;
+        let total_used = stats.total_bytes + blob_size;
+        
+        let quota = self.get_storage_quota()?;
+        let (percent, over_quota) = match quota {
+            Some(q) if q > 0 => {
+                let pct = ((total_used as f64 / q as f64) * 100.0).min(255.0) as u8;
+                (pct, total_used > q as usize)
+            }
+            _ => (0, false),
+        };
+        
+        Ok((total_used, quota, percent, over_quota))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn check_storage_quota(&self) -> Result<(usize, Option<u64>, u8, bool), Box<dyn std::error::Error>> {
+        Ok((0, None, 0, false))
+    }
+
     pub fn get_all_nodes(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -238,6 +549,16 @@ impl Store {
         if posts.len() > limit {
             posts.truncate(limit);
         }
+        Ok(posts)
+    }
+
+    pub fn get_posts_global(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+         let mut posts: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.r#type == "post:v1")
+            .collect();
+
+        posts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(posts)
     }
 
@@ -598,6 +919,76 @@ impl Store {
         Ok(proofs)
     }
 
+    /// Count vouches made BY a specific user (not vouches FOR them)
+    pub fn count_vouches_by(&self, author_id: &str) -> Result<usize, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let count = nodes.iter()
+            .filter(|n| {
+                n.author == author_id && matches!(n.payload, DagPayload::Proof(_))
+            })
+            .count();
+        Ok(count)
+    }
+
+    /// Get timestamp of most recent vouch by a user (for rate limiting)
+    pub fn get_latest_vouch_time(&self, author_id: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let latest = nodes.iter()
+            .filter(|n| n.author == author_id && matches!(n.payload, DagPayload::Proof(_)))
+            .max_by_key(|n| n.timestamp)
+            .map(|n| n.timestamp);
+        Ok(latest)
+    }
+
+    /// Get profile creation time (for account age check)
+    pub fn get_profile_created_time(&self, author_id: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let earliest = nodes.iter()
+            .filter(|n| n.author == author_id && matches!(n.payload, DagPayload::Profile(_)))
+            .min_by_key(|n| n.timestamp)
+            .map(|n| n.timestamp);
+        Ok(earliest)
+    }
+
+    /// Get all pending applications (applications without enough approvals)
+    pub fn get_pending_applications(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let applications: Vec<DagNode> = nodes.iter()
+            .filter(|n| matches!(n.payload, DagPayload::Application(_)))
+            .cloned()
+            .collect();
+        
+        // Filter to only include applications that haven't been fully approved yet
+        // For simplicity, return all applications - UI will filter based on vote counts
+        Ok(applications)
+    }
+
+    /// Get all votes for a specific application
+    pub fn get_application_votes(&self, application_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let votes: Vec<DagNode> = nodes.iter()
+            .filter(|n| {
+                if let DagPayload::ApplicationVote(ref av) = n.payload {
+                    av.application_id == application_id
+                } else {
+                    false
+                }
+            })
+            .cloned()
+            .collect();
+        Ok(votes)
+    }
+
+    /// Get timestamp of most recent application vote by a user
+    pub fn get_latest_application_vote_time(&self, author_id: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let latest = nodes.iter()
+            .filter(|n| n.author == author_id && matches!(n.payload, DagPayload::ApplicationVote(_)))
+            .max_by_key(|n| n.timestamp)
+            .map(|n| n.timestamp);
+        Ok(latest)
+    }
+
     pub fn get_web_page(&self, url: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut latest_content: Option<(i64, String)> = None;
@@ -657,25 +1048,6 @@ impl Store {
             }
         }
         Ok(latest_record.map(|(_, target)| target))
-    }
-
-    /// Returns (block_count, total_bytes_stored)
-    pub fn get_storage_stats(&self) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let conn = self.conn.lock().unwrap();
-            let count: usize = conn.query_row("SELECT COUNT(*) FROM blocks", [], |row| row.get(0))?;
-            let total_bytes: usize = conn.query_row("SELECT COALESCE(SUM(LENGTH(data)), 0) FROM blocks", [], |row| row.get(0))?;
-            Ok((count, total_bytes))
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let blocks = self.blocks.lock().unwrap();
-            let count = blocks.len();
-            let total_bytes: usize = blocks.values().map(|v| v.len()).sum();
-            Ok((count, total_bytes))
-        }
     }
 
     pub fn search_web_pages(&self, query: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
@@ -967,6 +1339,29 @@ impl Store {
         for (_, (_, node)) in my_pages {
             result.push(node);
         }
+        Ok(result)
+    }
+
+    /// Get all web pages from all users, returning only the latest version of each URL
+    pub fn get_all_web_pages(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut all_pages: std::collections::HashMap<String, (i64, DagNode)> = std::collections::HashMap::new();
+
+        for node in nodes {
+            if let DagPayload::Web(ref web) = node.payload {
+                let timestamp = node.timestamp.timestamp();
+                if let Some((existing_ts, _)) = all_pages.get(&web.url) {
+                    if timestamp > *existing_ts {
+                        all_pages.insert(web.url.clone(), (timestamp, node.clone()));
+                    }
+                } else {
+                    all_pages.insert(web.url.clone(), (timestamp, node.clone()));
+                }
+            }
+        }
+
+        let mut result: Vec<DagNode> = all_pages.into_values().map(|(_, n)| n).collect();
+        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(result)
     }
 
@@ -1332,6 +1727,98 @@ impl Store {
         }
         
         Ok(default_ministries)
+    }
+
+    // ======= EDUCATION SYSTEM =======
+
+    /// Get all courses, sorted by timestamp (most recent first)
+    pub fn get_courses(&self, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let mut courses: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.r#type == "course:v1")
+            .collect();
+
+        courses.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if courses.len() > limit {
+            courses.truncate(limit);
+        }
+        Ok(courses)
+    }
+
+    /// Get all exams, sorted by timestamp (most recent first)
+    pub fn get_exams(&self, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let mut exams: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.r#type == "exam:v1")
+            .collect();
+
+        exams.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if exams.len() > limit {
+            exams.truncate(limit);
+        }
+        Ok(exams)
+    }
+
+    /// Get all certifications for a specific user
+    pub fn get_certifications(&self, peer_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let certifications: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| {
+                if n.r#type == "certification:v1" {
+                    if let DagPayload::Certification(ref cert) = n.payload {
+                        return cert.recipient == peer_id;
+                    }
+                }
+                false
+            })
+            .collect();
+        Ok(certifications)
+    }
+
+    /// Get all exam submissions by a specific user
+    pub fn get_exam_submissions(&self, peer_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let submissions: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| n.author == peer_id && n.r#type == "exam_submission:v1")
+            .collect();
+        Ok(submissions)
+    }
+    
+    // ======= SMART CONTRACTS =======
+    
+    /// Get all nodes that reference a specific CID. 
+    /// Useful for getting finding Contract Calls and Token Transfers related to a contract.
+    pub fn get_nodes_by_ref(&self, ref_cid: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let mut results = Vec::new();
+        
+        for node in nodes {
+            match &node.payload {
+                DagPayload::ContractCall(call) => {
+                    if call.contract_id == ref_cid {
+                        results.push(node.clone());
+                    }
+                }
+                DagPayload::Token(token) => {
+                    if let Some(r_cid) = &token.ref_cid {
+                        if r_cid == ref_cid {
+                             results.push(node.clone());
+                        }
+                    }
+                }
+                DagPayload::Listing(listing) => {
+                    if let Some(r_cid) = &listing.ref_cid {
+                        if r_cid == ref_cid {
+                            results.push(node.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(results)
     }
 }
 

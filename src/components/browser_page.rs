@@ -36,9 +36,9 @@ pub fn BrowserComponent() -> Element {
         let input = url_input();
         is_loading.set(true);
         
-        // Special URLs
+        // Special URLs - gov.super is now handled internally by SuperWebShell
         if input == "sp://gov.super" || input == "sp://gov.super/" {
-            nav_submit.push(Route::GovernanceComponent {});
+            // This URL is handled by the SuperWebShell, just set loading to false
             is_loading.set(false);
             return;
         }

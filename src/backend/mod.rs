@@ -63,7 +63,9 @@ pub enum AppCmd {
     ResolveName { name: String },
     FetchBlock { cid: String, peer_id: Option<String> },
     FetchStorageStats,
-    CreateListing { title: String, description: String, price: u64, image_cid: Option<String> },
+    SetStorageQuota { quota_mb: Option<u64> },  // None = unlimited
+    FetchStorageQuota,
+    CreateListing { title: String, description: String, price: u64, image_cid: Option<String>, category: Option<String> },
     BuyListing { listing_id: String },
     UpdateListingStatus { listing_id: String, status: dag::ListingStatus },
     SearchListings { query: String },
@@ -81,6 +83,12 @@ pub enum AppCmd {
     FetchContractState {
         contract_id: String,
     },
+    FetchContractHistory { contract_id: String },
+    AcceptContract { contract_id: String },
+    RejectContract { contract_id: String },
+    CancelContract { contract_id: String },
+    PayContract { contract_id: String, amount: u64 },
+    FetchPendingContracts, // Contracts awaiting my acceptance
     FetchPublicLedger,
     PublishProposal { title: String, description: String, r#type: dag::ProposalType },
     VoteProposal { proposal_id: String, vote: dag::VoteType },
@@ -94,6 +102,7 @@ pub enum AppCmd {
     FetchCandidateTally { candidacy_id: String },
     FetchReputation { peer_id: String },
     FetchMyWebPages,
+    FetchAllWebPages,
     ReportContent { target_id: String, reason: String, details: String },
     FetchReports,
     UploadFile { name: String, mime_type: String, data: Vec<u8> },
@@ -118,6 +127,20 @@ pub enum AppCmd {
     FetchFollowers { target: String },
     FetchGivenUserPosts { peer_id: String },
     FetchFollowingPosts,
+    FetchTaxRate,
+    // Education System
+    CreateCourse { title: String, description: String, content: String, category: String, prerequisites: Vec<String> },
+    CreateExam { title: String, course_id: Option<String>, questions: Vec<(String, Vec<String>, usize)>, passing_score: u8, certification_type: String },
+    SubmitExam { exam_id: String, answers: Vec<usize> },
+    FetchCourses,
+    FetchExams,
+    FetchCertifications { peer_id: String },
+    FetchMyCertifications,
+    // Verification Application System
+    SubmitApplication { name: String, bio: String, photo_cid: Option<String> },
+    VoteApplication { application_id: String, approve: bool },
+    FetchPendingApplications,
+    FetchApplicationVotes { application_id: String },
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +166,8 @@ pub enum AppEvent {
     Listening(String),
     NameResolved { name: String, target: Option<String> },
     StorageStatsFetched { block_count: usize, total_bytes: usize },
+    StorageQuotaFetched { quota_mb: Option<u64>, used_bytes: usize, percent: u8 },
+    StorageWarning { used_percent: u8, message: String },
     LocalPostsFetched(Vec<dag::DagNode>),
     ListingsFetched(Vec<dag::DagNode>),
     WebSearchResults(Vec<dag::DagNode>),
@@ -152,6 +177,8 @@ pub enum AppEvent {
         contract_id: String,
         state: String,
     },
+    ContractHistoryFetched { contract_id: String, history: Vec<dag::DagNode> },
+    PendingContractsFetched(Vec<dag::DagNode>),
     PublicLedgerFetched(Vec<dag::DagNode>),
     ProposalsFetched(Vec<dag::DagNode>),
     ProposalVotesFetched { proposal_id: String, votes: Vec<dag::DagNode> },
@@ -162,6 +189,7 @@ pub enum AppEvent {
     CandidateTallyFetched { candidacy_id: String, votes: usize },
     ReputationFetched(dag::ReputationDetails),
     MyWebPagesFetched(Vec<dag::DagNode>),
+    AllWebPagesFetched(Vec<dag::DagNode>),
     ReportsFetched(Vec<dag::DagNode>),
     FileUploaded(dag::DagNode),
     MyFilesFetched(Vec<dag::DagNode>),
@@ -177,6 +205,15 @@ pub enum AppEvent {
     FollowersFetched(Vec<String>),
     UserPostsFetched(Vec<dag::DagNode>),
     FollowingPostsFetched(Vec<dag::DagNode>),
+    TaxRateFetched(u8),
+    // Education System
+    CoursesFetched(Vec<dag::DagNode>),
+    ExamsFetched(Vec<dag::DagNode>),
+    CertificationsFetched(Vec<dag::DagNode>),
+    ExamSubmitted { exam_id: String, score: u8, passed: bool },
+    // Application Verification System
+    PendingApplicationsFetched(Vec<dag::DagNode>),
+    ApplicationVotesFetched { application_id: String, approvals: usize, rejections: usize, required: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -319,8 +356,29 @@ impl Backend {
             }
         }
 
-        // 2. Check proofs
-        // We need to check if ANY of the proofs are signed by a verified user.
+        // 2. Check for approved application
+        if let Ok(apps) = self.store.get_pending_applications() {
+            for app in apps {
+                if app.author == peer_id {
+                    // Check if this application has enough approvals
+                    if let Ok(votes) = self.store.get_application_votes(&app.id) {
+                        let network_size = self.store.count_unique_profiles().unwrap_or(0);
+                        let required = Self::required_approvals(network_size);
+                        let approvals = votes.iter()
+                            .filter(|v| {
+                                if let dag::DagPayload::ApplicationVote(ref av) = v.payload {
+                                    av.approve
+                                } else { false }
+                            }).count();
+                        if approvals >= required {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check proofs (legacy vouch chain - still valid)
         match self.store.get_proofs(peer_id) {
             Ok(proofs) => {
                 for proof in proofs {
@@ -340,6 +398,32 @@ impl Backend {
         let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
         let mut visited = std::collections::HashSet::new();
         self.is_verified(&author_hex, &mut visited)
+    }
+
+    /// Calculate required approvals based on network size
+    fn required_approvals(network_size: usize) -> usize {
+        match network_size {
+            0..=100 => 1,      // Bootstrap: 1 vote
+            101..=1000 => 3,   // Small: 3 votes
+            1001..=10000 => 5, // Medium: 5 votes
+            _ => 10,           // Large: 10 votes
+        }
+    }
+
+    fn has_certification(&self, peer_id: &str, cert_type: &str) -> bool {
+        match self.store.get_certifications(peer_id) {
+            Ok(nodes) => {
+                for node in nodes {
+                    if let dag::DagPayload::Certification(cert) = node.payload {
+                        if cert.certification_type == cert_type {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            Err(_) => false,
+        }
     }
 
     fn try_decrypt(&self, node: &dag::DagNode) -> String {
@@ -555,11 +639,26 @@ impl Backend {
                     eprintln!("Cannot vouch: User is not verified.");
                     return;
                 }
-                let payload = dag::DagPayload::Proof(dag::ProofPayload { target_pubkey: target_peer_id });
-                
-                // Get previous head for this user if any
+
                 let author_pubkey = self.keypair.public();
                 let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+
+                // Check 1: Prevent self-vouch
+                if target_peer_id == author_hex {
+                    eprintln!("Cannot vouch for yourself.");
+                    return;
+                }
+
+                // Check 2: Prevent duplicate vouch
+                if let Ok(existing_proofs) = self.store.get_proofs(&target_peer_id) {
+                    if existing_proofs.iter().any(|p| p.author == author_hex) {
+                        eprintln!("Cannot vouch: You have already vouched for this user.");
+                        return;
+                    }
+                }
+
+
+                let payload = dag::DagPayload::Proof(dag::ProofPayload { target_pubkey: target_peer_id });
                 
                 let prev = match self.store.get_head(&author_hex) {
                     Ok(Some(cid)) => vec![cid],
@@ -977,6 +1076,369 @@ impl Backend {
                 }
             }
 
+            // ========== EDUCATION SYSTEM ==========
+            AppCmd::CreateCourse { title, description, content, category, prerequisites } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot create course: User is not verified.");
+                    return;
+                }
+                
+                let cat = match category.as_str() {
+                    "CivicLiteracy" => dag::CourseCategory::CivicLiteracy,
+                    "GovernanceRoles" => dag::CourseCategory::GovernanceRoles,
+                    "TechnicalSkills" => dag::CourseCategory::TechnicalSkills,
+                    "TradeQualifications" => dag::CourseCategory::TradeQualifications,
+                    "ModerationJury" => dag::CourseCategory::ModerationJury,
+                    _ => dag::CourseCategory::Custom(category),
+                };
+                
+                let payload = dag::DagPayload::Course(dag::CoursePayload {
+                    title,
+                    description,
+                    content,
+                    category: cat,
+                    exam_id: None,
+                    prerequisites,
+                });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(e) => {
+                        eprintln!("Failed to get head: {:?}", e);
+                        vec![]
+                    }
+                };
+                
+                match dag::DagNode::new("course:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store course node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create course node: {:?}", e),
+                }
+            }
+            
+            AppCmd::CreateExam { title, course_id, questions, passing_score, certification_type } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot create exam: User is not verified.");
+                    return;
+                }
+                
+                // Convert questions to ExamQuestion structs
+                let exam_questions: Vec<dag::ExamQuestion> = questions.into_iter().map(|(q, opts, correct_idx)| {
+                    // Hash the correct answer index for verification
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(correct_idx.to_string().as_bytes());
+                    let hash = hex::encode(hasher.finalize());
+                    
+                    dag::ExamQuestion {
+                        question: q,
+                        options: opts,
+                        correct_answer_hash: hash,
+                    }
+                }).collect();
+                
+                let payload = dag::DagPayload::Exam(dag::ExamPayload {
+                    title,
+                    course_id,
+                    questions: exam_questions,
+                    passing_score,
+                    certification_type,
+                });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(_) => vec![],
+                };
+                
+                match dag::DagNode::new("exam:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store exam node: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                        self.replicate_block(&node);
+                    }
+                    Err(e) => eprintln!("Failed to create exam node: {:?}", e),
+                }
+            }
+            
+            AppCmd::SubmitExam { exam_id, answers } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot submit exam: User is not verified.");
+                    return;
+                }
+                
+                // Fetch the exam to verify answers
+                let (score, passed, cert_type) = match self.store.get_node(&exam_id) {
+                    Ok(Some(node)) => {
+                        if let dag::DagPayload::Exam(exam) = &node.payload {
+                            let mut correct = 0;
+                            for (i, answer) in answers.iter().enumerate() {
+                                if i < exam.questions.len() {
+                                    use sha2::{Sha256, Digest};
+                                    let mut hasher = Sha256::new();
+                                    hasher.update(answer.to_string().as_bytes());
+                                    let hash = hex::encode(hasher.finalize());
+                                    if hash == exam.questions[i].correct_answer_hash {
+                                        correct += 1;
+                                    }
+                                }
+                            }
+                            let score = if !exam.questions.is_empty() {
+                                ((correct as f32 / exam.questions.len() as f32) * 100.0) as u8
+                            } else {
+                                0
+                            };
+                            let passed = score >= exam.passing_score;
+                            (score, passed, exam.certification_type.clone())
+                        } else {
+                            eprintln!("Node is not an exam");
+                            return;
+                        }
+                    }
+                    _ => {
+                        eprintln!("Exam not found: {}", exam_id);
+                        return;
+                    }
+                };
+                
+                let payload = dag::DagPayload::ExamSubmission(dag::ExamSubmissionPayload {
+                    exam_id: exam_id.clone(),
+                    answers,
+                    score,
+                    passed,
+                });
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                
+                let prev = match self.store.get_head(&author_hex) {
+                    Ok(Some(cid)) => vec![cid],
+                    Ok(None) => vec![],
+                    Err(_) => vec![],
+                };
+                
+                match dag::DagNode::new("exam_submission:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        if let Err(e) = self.store.put_node(&node) {
+                            eprintln!("Failed to store exam submission: {:?}", e);
+                            return;
+                        }
+                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                            eprintln!("Failed to update head: {:?}", e);
+                        }
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic.clone(), node.id.as_bytes());
+                        let _ = self.event_tx.send(AppEvent::ExamSubmitted { exam_id: exam_id.clone(), score, passed });
+                        self.replicate_block(&node);
+                        
+                        // Issue Certification if Passed
+                        if passed {
+                             println!("Exam passed ({}%), issuing certification...", score);
+                             
+                             let cert_payload = dag::DagPayload::Certification(dag::CertificationPayload {
+                                 recipient: author_hex.clone(),
+                                 certification_type: cert_type.clone(),
+                                 exam_id: Some(exam_id.clone()),
+                                 issuer_signatures: vec![],
+                                 issued_at: chrono::Utc::now(), 
+                                 expires_at: None,
+                             });
+                             
+                             // Get updated head
+                             let cert_prev = match self.store.get_head(&author_hex) {
+                                 Ok(Some(cid)) => vec![cid],
+                                 _ => vec![],
+                             };
+                             
+                             match dag::DagNode::new("certification:v1".to_string(), cert_payload, cert_prev, &self.keypair, 0) {
+                                 Ok(cert_node) => {
+                                     println!("Created certification node: {}", cert_node.id);
+                                     if let Err(e) = self.store.put_node(&cert_node) {
+                                         eprintln!("Failed to store cert node: {:?}", e);
+                                     } else {
+                                         if let Err(e) = self.store.update_head(&author_hex, &cert_node.id) {
+                                             eprintln!("Failed to update head: {:?}", e);
+                                         }
+                                         let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, cert_node.id.as_bytes());
+                                         let _ = self.event_tx.send(AppEvent::BlockReceived(cert_node.clone()));
+                                         self.replicate_block(&cert_node);
+                                     }
+                                 }
+                                 Err(e) => eprintln!("Failed to create cert node: {:?}", e),
+                             }
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to create exam submission node: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchCourses => {
+                match self.store.get_courses(50) {
+                    Ok(courses) => {
+                        let _ = self.event_tx.send(AppEvent::CoursesFetched(courses));
+                    }
+                    Err(e) => eprintln!("Failed to fetch courses: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchExams => {
+                match self.store.get_exams(50) {
+                    Ok(exams) => {
+                        let _ = self.event_tx.send(AppEvent::ExamsFetched(exams));
+                    }
+                    Err(e) => eprintln!("Failed to fetch exams: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchCertifications { peer_id } => {
+                match self.store.get_certifications(&peer_id) {
+                    Ok(certs) => {
+                        let _ = self.event_tx.send(AppEvent::CertificationsFetched(certs));
+                    }
+                    Err(e) => eprintln!("Failed to fetch certifications: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchMyCertifications => {
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                match self.store.get_certifications(&author_hex) {
+                    Ok(certs) => {
+                        let _ = self.event_tx.send(AppEvent::CertificationsFetched(certs));
+                    }
+                    Err(e) => eprintln!("Failed to fetch my certifications: {:?}", e),
+                }
+            }
+
+            // === Application-Based Verification System ===
+            AppCmd::SubmitApplication { name, bio, photo_cid } => {
+                // Anyone can submit an application
+                let payload = dag::DagPayload::Application(dag::ApplicationPayload {
+                    name,
+                    bio,
+                    photo_cid,
+                });
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+
+                match dag::DagNode::new("application:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Created application node: {}", node.id);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to create application: {:?}", e),
+                }
+            }
+
+            AppCmd::VoteApplication { application_id, approve } => {
+                if !self.is_caller_verified() {
+                    eprintln!("Cannot vote: User is not verified.");
+                    return;
+                }
+
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+
+                // Check cooldown (12 hours between votes)
+                if let Ok(Some(last_vote)) = self.store.get_latest_application_vote_time(&author_hex) {
+                    let hours_since = (chrono::Utc::now() - last_vote).num_hours();
+                    if hours_since < 12 {
+                        eprintln!("Cannot vote: Cooldown active. {} hours remaining.", 12 - hours_since);
+                        return;
+                    }
+                }
+
+                // Check for duplicate vote on same application
+                if let Ok(existing_votes) = self.store.get_application_votes(&application_id) {
+                    if existing_votes.iter().any(|v| v.author == author_hex) {
+                        eprintln!("Cannot vote: Already voted on this application.");
+                        return;
+                    }
+                }
+
+                let payload = dag::DagPayload::ApplicationVote(dag::ApplicationVotePayload {
+                    application_id: application_id.clone(),
+                    approve,
+                });
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+
+                match dag::DagNode::new("application_vote:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Voted on application {}: approve={}", application_id, approve);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to vote on application: {:?}", e),
+                }
+            }
+
+            AppCmd::FetchPendingApplications => {
+                match self.store.get_pending_applications() {
+                    Ok(apps) => {
+                        let _ = self.event_tx.send(AppEvent::PendingApplicationsFetched(apps));
+                    }
+                    Err(e) => eprintln!("Failed to fetch pending applications: {:?}", e),
+                }
+            }
+
+            AppCmd::FetchApplicationVotes { application_id } => {
+                // Count votes and determine required threshold
+                let network_size = self.store.count_unique_profiles().unwrap_or(0);
+                let required = Self::required_approvals(network_size);
+                
+                match self.store.get_application_votes(&application_id) {
+                    Ok(votes) => {
+                        let approvals = votes.iter()
+                            .filter(|v| {
+                                if let dag::DagPayload::ApplicationVote(ref av) = v.payload {
+                                    av.approve
+                                } else { false }
+                            }).count();
+                        let rejections = votes.len() - approvals;
+                        let _ = self.event_tx.send(AppEvent::ApplicationVotesFetched {
+                            application_id, approvals, rejections, required
+                        });
+                    }
+                    Err(e) => eprintln!("Failed to fetch application votes: {:?}", e),
+                }
+            }
+
             AppCmd::FetchMyProfile => {
                 let author_pubkey = self.keypair.public();
                 let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
@@ -1059,6 +1521,47 @@ impl Backend {
                 }
             }
 
+            AppCmd::FetchFollowingPosts => {
+                // For now, just simplistic fetch of all posts from followed users + self.
+                // Optimally we'd do this incrementally or with a specific DHT query strategy.
+                // Here we cheat a bit and scan local cache or known peers if possible, but
+                // since we don't have a specific "get posts from X" strictly replicated, 
+                // we rely on what we've seen via gossipsub or direct replication.
+                // In a real P2P app, you'd query each followed peer for their latest head.
+                
+                // Let's simplified: just return all posts we have locally that match followed users
+                let all_posts = match self.store.get_posts_global() {
+                    Ok(p) => p,
+                    Err(_) => vec![],
+                };
+                
+                // Filter
+                // Need to enable access to `following` list here or re-fetch it.
+                // We'll re-fetch following list locally
+                 let my_pubkey = self.keypair.public();
+                 let my_hex = libp2p::PeerId::from_public_key(&my_pubkey).to_string();
+                 
+                 let following = match self.store.get_following(&my_hex) {
+                     Ok(f) => f,
+                     Err(_) => vec![],
+                 };
+                 let following_set: std::collections::HashSet<_> = following.into_iter().collect();
+                 
+                 let filtered: Vec<_> = all_posts.into_iter()
+                    .filter(|p| p.author == my_hex || following_set.contains(&p.author))
+                    .collect();
+                    
+                 let _ = self.event_tx.send(AppEvent::FollowingPostsFetched(filtered));
+            }
+
+            AppCmd::FetchTaxRate => {
+                match self.store.get_current_tax_rate() {
+                    Ok(rate) => {
+                        let _ = self.event_tx.send(AppEvent::TaxRateFetched(rate));
+                    }
+                    Err(e) => eprintln!("Failed to fetch tax rate: {:?}", e),
+                }
+            }
 
             AppCmd::MintToken { amount } => {
                 if !self.is_caller_verified() {
@@ -1516,7 +2019,11 @@ impl Backend {
                     eprintln!("Cannot deploy contract: User is not verified.");
                     return;
                 }
-                let payload = dag::DagPayload::Contract(dag::ContractPayload { code, init_params });
+                let payload = dag::DagPayload::Contract(dag::ContractPayload { 
+                    code, 
+                    init_params,
+                    status: dag::ContractStatus::Pending,
+                });
                 let author_pubkey = self.keypair.public();
                 let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
                  let prev = match self.store.get_head(&author_hex) {
@@ -1635,7 +2142,154 @@ impl Backend {
                 let _ = self.event_tx.send(AppEvent::ContractStateFetched { contract_id, state: final_state_str });
             }
 
+            AppCmd::FetchContractHistory { contract_id } => {
+                match self.store.get_nodes_by_ref(&contract_id) {
+                    Ok(history) => {
+                        let _ = self.event_tx.send(AppEvent::ContractHistoryFetched { contract_id, history });
+                    }
+                     Err(e) => eprintln!("Failed to fetch contract history: {:?}", e),
+                }
+            }
 
+            AppCmd::AcceptContract { contract_id } => {
+                // Create a contract_call node with method "accept" to signal acceptance
+                let payload = dag::DagPayload::ContractCall(dag::ContractCallPayload {
+                    contract_id: contract_id.clone(),
+                    method: "accept".to_string(),
+                    params: "{}".to_string(),
+                });
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+                
+                match dag::DagNode::new("contract_call:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Contract accepted: {}", contract_id);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to accept contract: {:?}", e),
+                }
+            }
+
+            AppCmd::RejectContract { contract_id } => {
+                let payload = dag::DagPayload::ContractCall(dag::ContractCallPayload {
+                    contract_id: contract_id.clone(),
+                    method: "reject".to_string(),
+                    params: "{}".to_string(),
+                });
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+                
+                match dag::DagNode::new("contract_call:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Contract rejected: {}", contract_id);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to reject contract: {:?}", e),
+                }
+            }
+
+            AppCmd::CancelContract { contract_id } => {
+                let payload = dag::DagPayload::ContractCall(dag::ContractCallPayload {
+                    contract_id: contract_id.clone(),
+                    method: "cancel".to_string(),
+                    params: "{}".to_string(),
+                });
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+                
+                match dag::DagNode::new("contract_call:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Contract cancelled: {}", contract_id);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to cancel contract: {:?}", e),
+                }
+            }
+
+            AppCmd::PayContract { contract_id, amount } => {
+                // Parse the contract to find the recipient (provider)
+                let recipient = match self.store.get_node(&contract_id) {
+                    Ok(Some(node)) => {
+                        if let dag::DagPayload::Contract(c) = &node.payload {
+                            let params: serde_json::Value = serde_json::from_str(&c.init_params).unwrap_or(serde_json::json!({}));
+                            params["parties"]["provider"].as_str().unwrap_or("").to_string()
+                        } else {
+                            "".to_string()
+                        }
+                    }
+                    _ => "".to_string(),
+                };
+
+                if recipient.is_empty() {
+                    eprintln!("Could not determine recipient from contract");
+                    return;
+                }
+
+                // Create token transfer with ref_cid pointing to the contract
+                let payload = dag::DagPayload::Token(dag::TokenPayload {
+                    action: dag::TokenAction::Burn,
+                    amount,
+                    target: Some(recipient.clone()),
+                    memo: Some(format!("Contract payment: {}", contract_id)),
+                    ref_cid: Some(contract_id.clone()),
+                });
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let prev = self.store.get_head(&author_hex).ok().flatten().map_or(vec![], |c| vec![c]);
+
+                match dag::DagNode::new("token:v1".to_string(), payload, prev, &self.keypair, 0) {
+                    Ok(node) => {
+                        println!("Contract payment: {} tokens to {} for contract {}", amount, recipient, contract_id);
+                        let _ = self.store.put_node(&node);
+                        let _ = self.store.update_head(&author_hex, &node.id);
+                        let topic = gossipsub::IdentTopic::new("blocks");
+                        let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes());
+                        self.replicate_block(&node);
+                        let _ = self.event_tx.send(AppEvent::BlockReceived(node));
+                    }
+                    Err(e) => eprintln!("Failed to pay contract: {:?}", e),
+                }
+            }
+
+            AppCmd::FetchPendingContracts => {
+                // Fetch contracts where I am the counterparty and status is Pending
+                let my_id = libp2p::PeerId::from_public_key(&self.keypair.public()).to_string();
+                match self.store.get_contracts() {
+                    Ok(contracts) => {
+                        let pending: Vec<dag::DagNode> = contracts.into_iter().filter(|n| {
+                            if let dag::DagPayload::Contract(c) = &n.payload {
+                                if c.status != dag::ContractStatus::Pending { return false; }
+                                // Check if I'm the consumer/borrower (counterparty)
+                                let params: serde_json::Value = serde_json::from_str(&c.init_params).unwrap_or(serde_json::json!({}));
+                                let consumer = params["parties"]["consumer"].as_str().unwrap_or("");
+                                consumer == my_id && n.author != my_id // I'm consumer but not creator
+                            } else {
+                                false
+                            }
+                        }).collect();
+                        let _ = self.event_tx.send(AppEvent::PendingContractsFetched(pending));
+                    }
+                    Err(e) => eprintln!("Failed to fetch pending contracts: {:?}", e),
+                }
+            }
 
             AppCmd::InitiateRecall { target_official, ministry, reason } => {
                 if !self.is_caller_verified() {
@@ -1947,23 +2601,80 @@ impl Backend {
 
             AppCmd::FetchStorageStats => {
                 match self.store.get_storage_stats() {
-                    Ok((block_count, total_bytes)) => {
-                        let _ = self.event_tx.send(AppEvent::StorageStatsFetched { block_count, total_bytes });
+                    Ok(stats) => {
+                        let _ = self.event_tx.send(AppEvent::StorageStatsFetched { 
+                            block_count: stats.total_nodes, 
+                            total_bytes: stats.total_bytes 
+                        });
                     }
                     Err(e) => eprintln!("Failed to get storage stats: {:?}", e),
                 }
             }
 
-            AppCmd::CreateListing { title, description, price, image_cid } => {
+            AppCmd::SetStorageQuota { quota_mb } => {
+                let quota_bytes = quota_mb.map(|mb| mb * 1024 * 1024);
+                match self.store.set_storage_quota(quota_bytes) {
+                    Ok(()) => {
+                        // Fetch and emit updated quota status
+                        if let Ok((used, quota, percent, _)) = self.store.check_storage_quota() {
+                            let _ = self.event_tx.send(AppEvent::StorageQuotaFetched {
+                                quota_mb,
+                                used_bytes: used,
+                                percent,
+                            });
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to set storage quota: {:?}", e),
+                }
+            }
+
+            AppCmd::FetchStorageQuota => {
+                match self.store.check_storage_quota() {
+                    Ok((used, quota, percent, over_quota)) => {
+                        let quota_mb = quota.map(|b| b / 1024 / 1024);
+                        let _ = self.event_tx.send(AppEvent::StorageQuotaFetched {
+                            quota_mb,
+                            used_bytes: used,
+                            percent,
+                        });
+                        // Emit warning if over 80%
+                        if percent >= 80 {
+                            let msg = if over_quota {
+                                format!("Storage quota exceeded! {}% used", percent)
+                            } else {
+                                format!("Storage usage high: {}% of quota used", percent)
+                            };
+                            let _ = self.event_tx.send(AppEvent::StorageWarning {
+                                used_percent: percent,
+                                message: msg,
+                            });
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to check storage quota: {:?}", e),
+                }
+            }
+
+            AppCmd::CreateListing { title, description, price, image_cid, category } => {
                 if !self.is_caller_verified() {
                     eprintln!("Cannot create listing: User is not verified.");
                     return;
                 }
+                
+                if let Some(cat) = &category {
+                     let author_pubkey = self.keypair.public();
+                     let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                     if !self.has_certification(&author_hex, cat) {
+                         eprintln!("Cannot create listing in category '{}': Certification missing", cat);
+                         return;
+                     }
+                }
+
                 let payload = dag::DagPayload::Listing(dag::ListingPayload {
                     title,
                     description,
                     price,
                     image_cid,
+                    category,
                     status: dag::ListingStatus::Active,
                     ref_cid: None,
                 });
@@ -2081,6 +2792,7 @@ impl Backend {
                                  description: listing.description,
                                  price: listing.price,
                                  image_cid: listing.image_cid,
+                                 category: listing.category.clone(),
                                  status: status,
                                  ref_cid: Some(listing.ref_cid.clone().unwrap_or(listing_id.clone())),
                              });
@@ -2125,6 +2837,21 @@ impl Backend {
                     eprintln!("Cannot publish proposal: User is not verified.");
                     return;
                 }
+
+                // Certification Gating
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+
+                match &r#type {
+                    dag::ProposalType::Constitutional | dag::ProposalType::DefineMinistries(_) | dag::ProposalType::SetTax(_) => {
+                         if !self.has_certification(&author_hex, "CivicLiteracy") {
+                             eprintln!("Cannot publish proposal: Missing 'CivicLiteracy' certification.");
+                             return;
+                         }
+                    },
+                    _ => {}
+                }
+
                 let payload = dag::DagPayload::Proposal(dag::ProposalPayload { title, description, r#type });
                 
                 let author_pubkey = self.keypair.public();
@@ -2249,6 +2976,15 @@ impl Backend {
                     eprintln!("Cannot declare candidacy: User is not verified.");
                     return;
                 }
+                
+                let author_pubkey = self.keypair.public();
+                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+
+                if !self.has_certification(&author_hex, "GovernanceRoles") {
+                    eprintln!("Cannot declare candidacy: Missing 'GovernanceRoles' certification.");
+                    return;
+                }
+
                 let payload = dag::DagPayload::Candidacy(dag::CandidacyPayload { ministry, platform });
                 
                 let author_pubkey = self.keypair.public();
@@ -2366,6 +3102,15 @@ impl Backend {
                         let _ = self.event_tx.send(AppEvent::MyWebPagesFetched(nodes));
                     }
                     Err(e) => eprintln!("Failed to fetch my web pages: {:?}", e),
+                }
+            }
+            
+            AppCmd::FetchAllWebPages => {
+                match self.store.get_all_web_pages() {
+                    Ok(nodes) => {
+                        let _ = self.event_tx.send(AppEvent::AllWebPagesFetched(nodes));
+                    }
+                    Err(e) => eprintln!("Failed to fetch all web pages: {:?}", e),
                 }
             }
             

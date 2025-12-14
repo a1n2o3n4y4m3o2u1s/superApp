@@ -371,9 +371,15 @@ pub fn HomeComponent() -> Element {
                                                 "{node.author.get(0..2).unwrap_or(\"??\")}"
                                             }
                                             div { class: "flex-1",
-                                                Link {
-                                                    to: crate::Route::UserProfileComponent { peer_id: node.author.clone() },
-                                                    class: "post-author",
+                                                button {
+                                                    class: "post-author cursor-pointer hover:underline bg-transparent border-none p-0 text-left",
+                                                    onclick: {
+                                                        let peer_id = node.author.clone();
+                                                        let mut app_state = app_state.clone();
+                                                        move |_| {
+                                                            app_state.browser_url.set(format!("sp://profile.super/{}", peer_id));
+                                                        }
+                                                    },
                                                     "{node.author.get(0..12).unwrap_or(&node.author)}..."
                                                 }
                                             }

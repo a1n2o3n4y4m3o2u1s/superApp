@@ -1,27 +1,14 @@
 mod backend;
 mod components;
 
-use components::home_page;
-use components::messaging_page;
 use components::nav_bar;
-
-use home_page::HomeComponent;
-use messaging_page::MessagingComponent;
 use nav_bar::NavComponent;
-use components::profile_page;
-use profile_page::{ProfileComponent, UserProfileComponent};
-use components::geohash_page;
-use geohash_page::GeohashComponent;
 use components::verification_page;
 use verification_page::VerificationPage;
-use components::browser_page;
-use browser_page::BrowserComponent;
-use components::marketplace_page;
-use marketplace_page::MarketplaceComponent;
-use components::governance_page;
-use governance_page::GovernanceComponent;
-use components::transparency_page;
-use transparency_page::TransparencyComponent;
+use components::superweb_shell;
+use superweb_shell::SuperWebShell;
+use components::smart_contracts_page;
+use smart_contracts_page::SmartContractsPage;
 
 use dioxus::prelude::*;
 use tokio::sync::mpsc;
@@ -32,27 +19,15 @@ pub enum Route {
     #[layout(RootLayout)]
         #[layout(NavComponent)]
         #[route("/")]
-        HomeComponent {},
-        #[route("/messaging")]
-        MessagingComponent {},
-        #[route("/profile")]
-        ProfileComponent {},
-        #[route("/geohash")]
-        GeohashComponent {},
-        #[route("/profile/:peer_id")]
-        UserProfileComponent { peer_id: String },
-        #[route("/browser")]
-        BrowserComponent {},
-        #[route("/marketplace")]
-        MarketplaceComponent {},
-        #[route("/governance")]
-        GovernanceComponent {},
-        #[route("/transparency")]
-        TransparencyComponent {},
+        SuperWebShell {},
+
+        #[route("/smart_contracts")]
+        SmartContractsPage {},
         #[end_layout]
     
     #[route("/verify")]
     VerificationPage {},
+    
 }
 
 use std::collections::HashSet;
@@ -92,10 +67,14 @@ fn App() -> Element {
     let mut listings = use_signal(|| Vec::<DagNode>::new());
     let mut web_search_results = use_signal(|| Vec::<DagNode>::new());
     let mut contracts = use_signal(|| Vec::<DagNode>::new());
+    let mut smart_contracts = use_signal(|| Vec::<DagNode>::new());
+    let mut active_contract_history = use_signal(|| Vec::<DagNode>::new());
+    let mut pending_contracts = use_signal(|| Vec::<DagNode>::new());
     let mut contract_states = use_signal(|| std::collections::HashMap::<String, String>::new());
     let mut proposals = use_signal(|| Vec::<DagNode>::new());
     let mut proposal_votes = use_signal(|| std::collections::HashMap::<String, Vec<DagNode>>::new());
     let mut proposal_tallies = use_signal(|| std::collections::HashMap::<String, (usize, usize, usize, usize, usize, String)>::new());
+    let mut current_tax_rate = use_signal(|| 0u8);
     let mut candidates = use_signal(|| Vec::<DagNode>::new());
     let mut candidate_tallies = use_signal(|| std::collections::HashMap::<String, usize>::new());
     let mut recalls = use_signal(|| Vec::<DagNode>::new());
@@ -116,16 +95,26 @@ fn App() -> Element {
     let mut following = use_signal(|| HashSet::<String>::new());
     let mut user_posts = use_signal(|| Vec::<DagNode>::new());
     let mut following_posts = use_signal(|| Vec::<DagNode>::new());
+    // Education System
+    let mut courses = use_signal(|| Vec::<DagNode>::new());
+    let mut exams = use_signal(|| Vec::<DagNode>::new());
+    let mut certifications = use_signal(|| Vec::<DagNode>::new());
+    let active_exam = use_signal(|| None::<DagNode>);
+    let mut pending_applications = use_signal(|| Vec::<DagNode>::new());
+    let exam_answers = use_signal(|| Vec::<Option<usize>>::new());
+    let mut exam_result = use_signal(|| None::<(String, u8, bool)>);
+    // Wiki homepage
+    let mut all_web_pages = use_signal(|| Vec::<DagNode>::new());
         
     // Groups
     let mut groups = use_signal(|| Vec::<DagNode>::new());
     let mut group_messages = use_signal(|| std::collections::HashMap::<String, Vec<(DagNode, String)>>::new());
     
-    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, contract_states, proposals, proposal_votes, proposal_tallies, candidates, candidate_tallies,        recalls,
+    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, smart_contracts, active_contract_history, pending_contracts, contract_states, proposals, proposal_votes, proposal_tallies, current_tax_rate, candidates, candidate_tallies, recalls,
         recall_tallies,
         oversight_cases,
         jury_duty,
-        reputation, my_web_pages, reports, groups, group_messages, files, public_ledger, file_search_results, ministries, comments, likes, stories, seen_stories, following, user_posts, following_posts });
+        reputation, my_web_pages, reports, groups, group_messages, files, public_ledger, file_search_results, ministries, comments, likes, stories, seen_stories, following, user_posts, following_posts, courses, exams, certifications, active_exam, pending_applications, exam_answers, exam_result, all_web_pages });
 
     // Initialize backend and context
     use_context_provider(|| {
@@ -272,6 +261,12 @@ fn App() -> Element {
                     AppEvent::ContractStateFetched { contract_id, state } => {
                         contract_states.write().insert(contract_id, state);
                     }
+                    AppEvent::ContractHistoryFetched { contract_id: _, history } => {
+                         active_contract_history.set(history);
+                    }
+                    AppEvent::PendingContractsFetched(contracts) => {
+                         pending_contracts.set(contracts);
+                    }
                     AppEvent::ProposalsFetched(fetched_proposals) => {
                         proposals.set(fetched_proposals);
                     }
@@ -280,6 +275,9 @@ fn App() -> Element {
                     }
                     AppEvent::ProposalTallyFetched { proposal_id, yes, no, abstain, petition, unique_voters, status } => {
                         proposal_tallies.write().insert(proposal_id, (yes, no, abstain, petition, unique_voters, status));
+                    }
+                    AppEvent::TaxRateFetched(rate) => {
+                        current_tax_rate.set(rate);
                     }
                     AppEvent::CandidatesFetched(fetched_candidates) => {
                         candidates.set(fetched_candidates);
@@ -304,6 +302,9 @@ fn App() -> Element {
                 }    
                     AppEvent::MyWebPagesFetched(pages) => {
                         my_web_pages.set(pages);
+                    }
+                    AppEvent::AllWebPagesFetched(pages) => {
+                        all_web_pages.set(pages);
                     }
                     AppEvent::GroupsFetched(fetched_groups) => {
                         groups.set(fetched_groups);
@@ -357,6 +358,26 @@ fn App() -> Element {
                     AppEvent::FollowingPostsFetched(p) => {
                         following_posts.set(p);
                     }
+                    // Education System events
+                    AppEvent::CoursesFetched(c) => {
+                        courses.set(c);
+                    }
+                    AppEvent::ExamsFetched(e) => {
+                        exams.set(e);
+                    }
+                    AppEvent::CertificationsFetched(c) => {
+                        certifications.set(c);
+                    }
+                    AppEvent::ExamSubmitted { exam_id, score, passed } => {
+                        println!("Exam {} submitted: score={}, passed={}", exam_id, score, passed);
+                        exam_result.set(Some((exam_id, score, passed)));
+                    }
+                    AppEvent::PendingApplicationsFetched(apps) => {
+                        pending_applications.set(apps);
+                    }
+                    AppEvent::ApplicationVotesFetched { .. } => {
+                        // Handled locally in UI
+                    }
                     _ => {}
                 }
             }
@@ -366,6 +387,7 @@ fn App() -> Element {
         let _ = cmd_tx.send(AppCmd::CheckVerificationStatus);
         let _ = cmd_tx.send(AppCmd::FetchStorageStats);
         let _ = cmd_tx.send(AppCmd::FetchMinistries);
+        let _ = cmd_tx.send(AppCmd::FetchTaxRate);
 
         // Return the sender to be stored in context
         cmd_tx
@@ -394,7 +416,7 @@ fn RootLayout() -> Element {
         } else {
             // Verified or Founder
             if current_route == (Route::VerificationPage {}) {
-                nav.push(Route::HomeComponent {});
+                nav.push(Route::SuperWebShell {});
             }
         }
     });

@@ -11,6 +11,8 @@ pub fn MarketplaceComponent() -> Element {
     let mut price = use_signal(|| String::new());
     let mut show_create_form = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
+    let mut category = use_signal(|| "".to_string());
+    let mut filter_certified_only = use_signal(|| false);
 
     // Fetch listings on mount
     let cmd_tx_effect = cmd_tx.clone();
@@ -27,10 +29,12 @@ pub fn MarketplaceComponent() -> Element {
                     description: description(),
                     price: price_val,
                     image_cid: None,
+                    category: if category().is_empty() { None } else { Some(category()) },
                 });
                 title.set(String::new());
                 description.set(String::new());
                 price.set(String::new());
+                category.set("".to_string());
                 show_create_form.set(false);
                 // Refresh listings
                 let _ = cmd_tx_create.send(AppCmd::FetchListings);
@@ -54,6 +58,9 @@ pub fn MarketplaceComponent() -> Element {
 
     let my_id = app_state.local_peer_id.read().clone();
 
+    // Use absolute path to Route
+    use crate::Route;
+
     rsx! {
         div { class: "page-container py-8 animate-fade-in",
             
@@ -65,6 +72,11 @@ pub fn MarketplaceComponent() -> Element {
                         p { class: "text-[var(--text-secondary)] mt-1", "Buy and sell with SUPER tokens" }
                     }
                     div { class: "flex gap-2",
+                        Link {
+                            to: Route::SmartContractsPage {},
+                            class: "btn btn-secondary",
+                            "Contracts"
+                        }
                         button { 
                             class: "btn btn-secondary", 
                             onclick: on_refresh,
@@ -80,7 +92,7 @@ pub fn MarketplaceComponent() -> Element {
             }
 
             // Search Bar
-            div { class: "panel mb-6 flex gap-2",
+            div { class: "panel mb-6 flex flex-col md:flex-row gap-2",
                 input {
                     class: "input flex-1",
                     placeholder: "Search listings...",
@@ -91,6 +103,15 @@ pub fn MarketplaceComponent() -> Element {
                             on_search(());
                         }
                     }
+                }
+                div { class: "flex items-center gap-2 px-2",
+                    input {
+                        "type": "checkbox",
+                        class: "checkbox",
+                        checked: "{filter_certified_only}",
+                        onchange: move |e| filter_certified_only.set(e.checked())
+                    }
+                    span { "Certified Providers Only" }
                 }
                 {
                     let on_search_click = on_search.clone();
@@ -137,6 +158,21 @@ pub fn MarketplaceComponent() -> Element {
                             oninput: move |e| description.set(e.value())
                         }
                     }
+                    div { class: "form-group",
+                        label { class: "form-label", "Certified Category (Optional)" }
+                        select {
+                            class: "input",
+                            value: "{category}",
+                            oninput: move |e| category.set(e.value()),
+                            option { value: "", "None / General" }
+                            option { value: "CivicLiteracy", "Civic Literacy" }
+                            option { value: "GovernanceRoles", "Governance Roles" }
+                            option { value: "TechnicalSkills", "Technical Skills" }
+                            option { value: "TradeQualifications", "Trade Qualifications" }
+                            option { value: "ModerationJury", "Moderation & Jury" }
+                        }
+                        p { class: "text-xs text-[var(--text-muted)] mt-1", "Requires holding the corresponding certification." }
+                    }
                     button { class: "btn btn-primary", onclick: on_create, "Create Listing" }
                 }
             }
@@ -151,8 +187,13 @@ pub fn MarketplaceComponent() -> Element {
             } else {
                 div { class: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6",
                     for node in app_state.listings.read().iter() {
-                        if let DagPayload::Listing(ListingPayload { title: item_title, description: item_desc, price: item_price, .. }) = &node.payload {
+                        if let DagPayload::Listing(ListingPayload { title: item_title, description: item_desc, price: item_price, category: item_cat, .. }) = &node.payload {
+                            if filter_certified_only() && item_cat.is_none() {
+                                // Skip uncertified if filter is on
+                                // This is a hacky way to filter in RSX loop, ideally filter before
+                            } else {
                             {
+                                let is_hidden = filter_certified_only() && item_cat.is_none();
                                 let author = node.author.clone();
                                 let is_my_listing = author == my_id;
                                 let listing_id = node.id.clone();
@@ -168,7 +209,17 @@ pub fn MarketplaceComponent() -> Element {
                                         key: "{node.id}",
                                         
                                         div { class: "p-4 flex-1",
-                                            h3 { class: "text-lg font-semibold mb-2", "{item_title}" }
+                                            if !is_hidden {
+                                            div {
+                                                if let Some(cat) = item_cat {
+                                                     span { class: "badge badge-primary mb-2 inline-flex items-center gap-1", 
+                                                        span { "✓" }
+                                                        "{cat}" // Could map to display name
+                                                     }
+                                                }
+                                                h3 { class: "text-lg font-semibold mb-2", "{item_title}" }
+                                            }
+                                            } else { div {} }
                                             p { class: "text-[var(--text-secondary)] text-sm mb-4 line-clamp-2", "{item_desc}" }
                                             
                                             div { class: "flex justify-between items-center pt-4 border-t border-[var(--border-color)]",
@@ -199,9 +250,15 @@ pub fn MarketplaceComponent() -> Element {
                                                             },
                                                             "Buy Now"
                                                         }
-                                                        Link {
-                                                            to: crate::Route::UserProfileComponent { peer_id: author.clone() },
+                                                        button {
                                                             class: "btn btn-secondary btn-sm",
+                                                            onclick: {
+                                                                let peer_id = author.clone();
+                                                                move |_| {
+                                                                    let mut app_state = use_context::<crate::components::AppState>();
+                                                                    app_state.browser_url.set(format!("sp://profile.super/{}", peer_id));
+                                                                }
+                                                            },
                                                             "Seller"
                                                         }
                                                     }
@@ -212,6 +269,7 @@ pub fn MarketplaceComponent() -> Element {
                                                 "Listed by: {author.get(0..12).unwrap_or(&author)}..."
                                             }
                                         }
+                                    }
                                     }
                                 }
                             }

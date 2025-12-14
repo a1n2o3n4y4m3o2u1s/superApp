@@ -15,6 +15,7 @@ pub fn GovernanceComponent() -> Element {
     let mut description = use_signal(|| "".to_string());
     let mut proposal_type = use_signal(|| "Standard".to_string());
     let mut tax_rate = use_signal(|| 0i64);
+    let mut defined_ministries = use_signal(|| vec![]);
     
     // Form state for candidacy
     let mut selected_ministry = use_signal(|| "VerificationAndIdentity".to_string());
@@ -36,6 +37,21 @@ pub fn GovernanceComponent() -> Element {
         let _ = cmd_tx_effect.send(AppCmd::FetchOversightCases);
         let _ = cmd_tx_effect.send(AppCmd::FetchJuryDuty);
         let _ = cmd_tx_effect.send(AppCmd::FetchMinistries);
+        let _ = cmd_tx_effect.send(AppCmd::FetchMyCertifications);
+        let _ = cmd_tx_effect.send(AppCmd::FetchTaxRate);
+    });
+
+    // Check Certifications
+    let certifications = app_state.certifications.read();
+    let has_civic_literacy = certifications.iter().any(|n| {
+        if let DagPayload::Certification(c) = &n.payload {
+            c.certification_type == "CivicLiteracy"
+        } else { false }
+    });
+    let has_governance_roles = certifications.iter().any(|n| {
+        if let DagPayload::Certification(c) = &n.payload {
+            c.certification_type == "GovernanceRoles"
+        } else { false }
     });
 
     // Fetch tallies when proposals change
@@ -71,6 +87,7 @@ pub fn GovernanceComponent() -> Element {
             "Constitutional" => ProposalType::Constitutional,
             "Emergency" => ProposalType::Emergency,
             "SetTax" => ProposalType::SetTax(tax_rate() as u8),
+            "DefineMinistries" => ProposalType::DefineMinistries(defined_ministries()),
             _ => ProposalType::Standard,
         };
 
@@ -121,12 +138,18 @@ pub fn GovernanceComponent() -> Element {
                 div { class: "flex justify-between items-center",
                     div {
                         h1 { class: "page-title", "Governance Portal" }
-                        p { class: "text-[var(--text-secondary)]", "Voice of the People: 1 Human = 1 Vote" }
+                        p { class: "text-[var(--text-secondary)]", 
+                            "Voice of the People: 1 Human = 1 Vote • Current System Tax: ",
+                            span { class: "font-bold text-green-500", "{app_state.current_tax_rate}%" }
+                        }
                     }
                     div { class: "flex gap-2",
-                         Link {
-                            to: crate::Route::TransparencyComponent {},
+                         button {
                             class: "btn btn-secondary",
+                            onclick: move |_| {
+                                let mut app_state = use_context::<AppState>();
+                                app_state.browser_url.set("sp://transparency.super".to_string());
+                            },
                             "👁️ Transparency"
                         }
                         button {
@@ -595,11 +618,46 @@ pub fn GovernanceComponent() -> Element {
                                     select {
                                         class: "w-full p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-color)]",
                                         value: "{proposal_type}",
-                                        oninput: move |e| proposal_type.set(e.value()),
+                                        oninput: move |e| {
+                                            proposal_type.set(e.value());
+                                            // Initialize ministries list if DefineMinistries is selected
+                                            if e.value() == "DefineMinistries" {
+                                                let current = app_state.ministries.read().clone();
+                                                defined_ministries.set(current);
+                                            }
+                                        },
                                         option { value: "Standard", "Standard (1 week, 50%)" }
-                                        option { value: "Constitutional", "Constitutional (1 week, 66%)" }
+                                        {
+                                            let const_text = if has_civic_literacy { "Constitutional (1 week, 66%)" } else { "Constitutional (Requires Civic Literacy)" };
+                                            rsx! {
+                                                option { 
+                                                    value: "Constitutional", 
+                                                    disabled: "{!has_civic_literacy}",
+                                                    "{const_text}" 
+                                                }
+                                            }
+                                        }
                                         option { value: "Emergency", "Emergency (48h, 50%, 5% Threshold)" }
-                                        option { value: "SetTax", "Set System Tax Rate" }
+                                        {
+                                            let tax_text = if has_civic_literacy { "Set System Tax Rate" } else { "Set System Tax Rate (Requires Civic Literacy)" };
+                                            rsx! {
+                                                option { 
+                                                    value: "SetTax",
+                                                    disabled: "{!has_civic_literacy}",
+                                                    "{tax_text}"
+                                                }
+                                            }
+                                        }
+                                        {
+                                            let min_text = if has_civic_literacy { "Redefine Government Ministries" } else { "Redefine Government Ministries (Requires Civic Literacy)" };
+                                            rsx! {
+                                                option { 
+                                                    value: "DefineMinistries", 
+                                                    disabled: "{!has_civic_literacy}",
+                                                    "{min_text}"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 
@@ -619,6 +677,48 @@ pub fn GovernanceComponent() -> Element {
                                                 div { class: "text-right font-bold text-lg", "{tax_rate}%" }
                                              }
                                         }
+                                    } else if proposal_type() == "DefineMinistries" {
+                                        rsx! {
+                                            div { class: "mb-4 p-4 bg-[var(--bg-secondary)] rounded-lg",
+                                                label { class: "block text-sm font-bold mb-2", "Proposed Ministries Structue" }
+                                                p { class: "text-xs text-[var(--text-muted)] mb-3", "Define the exact list of ministries for the next term. Warning: This replaces the entire existing structure." }
+                                                
+                                                div { class: "flex flex-col gap-2 mb-3",
+                                                    for (idx, ministry) in defined_ministries.read().iter().enumerate() {
+                                                        div { class: "flex gap-2",
+                                                            input {
+                                                                class: "flex-1 input py-1",
+                                                                value: "{ministry}",
+                                                                oninput: move |e| {
+                                                                    let mut mins = defined_ministries.read().clone();
+                                                                    mins[idx] = e.value();
+                                                                    defined_ministries.set(mins);
+                                                                }
+                                                            }
+                                                            button {
+                                                                class: "btn btn-sm btn-secondary text-red-400 hover:text-red-500",
+                                                                onclick: move |_| {
+                                                                    let mut mins = defined_ministries.read().clone();
+                                                                    mins.remove(idx);
+                                                                    defined_ministries.set(mins);
+                                                                },
+                                                                "Remove"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                button {
+                                                    class: "btn btn-sm btn-secondary w-full",
+                                                    onclick: move |_| {
+                                                        let mut mins = defined_ministries.read().clone();
+                                                        mins.push("NewMinistry".to_string());
+                                                        defined_ministries.set(mins);
+                                                    },
+                                                    "+ Add Ministry"
+                                                }
+                                            }
+                                        }
                                     } else {
                                         rsx!({})
                                     }
@@ -630,7 +730,7 @@ pub fn GovernanceComponent() -> Element {
                                     class: "input",
                                     value: "{title}",
                                     oninput: move |e| title.set(e.value()),
-                                    placeholder: "e.g., Fund Development of Region X"
+                                    placeholder: "e.g., Restructure to 5 Ministries"
                                 }
                             }
 
@@ -675,6 +775,22 @@ pub fn GovernanceComponent() -> Element {
                         }
                         
                         div { class: "grid gap-4",
+                            if !has_governance_roles {
+                                div { class: "bg-red-900/20 border border-red-500/30 p-4 rounded text-red-200 mb-2",
+                                    p { class: "font-bold", "🚫 Missing Certification" }
+                                    p { class: "text-sm", "You must hold the 'GovernanceRoles' certification to run for office." }
+                                    button {
+                                        class: "mt-2 btn btn-sm btn-secondary",
+                                        onclick: move |_| {
+                                            let mut app_state = app_state;
+                                            app_state.browser_url.set("sp://education.super".to_string());
+                                            show_candidacy_modal.set(false);
+                                        },
+                                        "Go to Education ->"
+                                    }
+                                }
+                            }
+
                             div { class: "form-group",
                                 label { class: "form-label", "Ministry" }
                                 select { 
@@ -710,6 +826,7 @@ pub fn GovernanceComponent() -> Element {
                                 }
                                 button {
                                     class: "btn btn-primary",
+                                    disabled: if !has_governance_roles { "true" } else { "false" },
                                     onclick: on_submit_candidacy,
                                     "Declare Candidacy"
                                 }

@@ -8,6 +8,9 @@ pub mod browser_page;
 pub mod marketplace_page;
 pub mod governance_page;
 pub mod transparency_page;
+pub mod superweb_shell;
+pub mod education_page;
+pub mod smart_contracts_page;
 
 
 
@@ -49,12 +52,16 @@ pub struct AppState {
     
     // Contracts
     pub contracts: Signal<Vec<DagNode>>,
+    pub smart_contracts: Signal<Vec<DagNode>>, // Filtered for my contracts
+    pub active_contract_history: Signal<Vec<DagNode>>,
+    pub pending_contracts: Signal<Vec<DagNode>>, // Contracts awaiting my acceptance
     pub contract_states: Signal<std::collections::HashMap<String, String>>, // ContractID -> JSON State
     
     // Governance
     pub proposals: Signal<Vec<DagNode>>,
     pub proposal_votes: Signal<std::collections::HashMap<String, Vec<DagNode>>>,
     pub proposal_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize, usize, usize, String)>>,
+    pub current_tax_rate: Signal<u8>,
     pub candidates: Signal<Vec<DagNode>>,
     pub candidate_tallies: Signal<std::collections::HashMap<String, usize>>,
     pub recalls: Signal<Vec<DagNode>>,
@@ -80,6 +87,17 @@ pub struct AppState {
     pub stories: Signal<Vec<DagNode>>,
     pub seen_stories: Signal<HashSet<String>>,
     pub following: Signal<HashSet<String>>,
+    // Education System
+    pub courses: Signal<Vec<DagNode>>,
+    pub exams: Signal<Vec<DagNode>>,
+    pub certifications: Signal<Vec<DagNode>>,
+    pub active_exam: Signal<Option<DagNode>>,
+    // Verification Application System
+    pub pending_applications: Signal<Vec<DagNode>>,
+    pub exam_answers: Signal<Vec<Option<usize>>>,
+    pub exam_result: Signal<Option<(String, u8, bool)>>, // (exam_id, score, passed)
+    // Wiki homepage
+    pub all_web_pages: Signal<Vec<DagNode>>,
 }
 
 impl AppState {
@@ -108,10 +126,14 @@ impl AppState {
             listings: use_signal(|| vec![]),
             web_search_results: use_signal(|| vec![]),
             contracts: use_signal(|| vec![]),
+            smart_contracts: use_signal(|| vec![]),
+            active_contract_history: use_signal(|| vec![]),
+            pending_contracts: use_signal(|| vec![]),
             contract_states: use_signal(|| std::collections::HashMap::new()),
             proposals: use_signal(|| vec![]),
             proposal_votes: use_signal(|| std::collections::HashMap::new()),
             proposal_tallies: use_signal(|| std::collections::HashMap::new()),
+            current_tax_rate: use_signal(|| 0),
             candidates: use_signal(|| vec![]),
             candidate_tallies: use_signal(|| std::collections::HashMap::new()),
             recalls: use_signal(|| vec![]),
@@ -137,6 +159,14 @@ impl AppState {
             stories: use_signal(|| vec![]),
             seen_stories: use_signal(|| HashSet::new()),
             following: use_signal(|| HashSet::new()),
+            courses: use_signal(|| vec![]),
+            exams: use_signal(|| vec![]),
+            certifications: use_signal(|| vec![]),
+            active_exam: use_signal(|| None),
+            pending_applications: use_signal(|| vec![]),
+            exam_answers: use_signal(|| vec![]),
+            exam_result: use_signal(|| None),
+            all_web_pages: use_signal(|| vec![]),
         }
     }
 }
