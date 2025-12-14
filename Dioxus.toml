@@ -1,4 +1,6 @@
 [application]
+name = "super-app"
+asset_dir = "assets"
 
 [web.app]
 
@@ -24,3 +26,4 @@ script = []
 identifier = "com.mycompany"
 publisher = "MyCompany"
 icon = ["icons/icon.ico"]
+resources = ["assets/*"]
