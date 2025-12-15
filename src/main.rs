@@ -407,7 +407,7 @@ fn App() -> Element {
     });
 
     rsx! {
-        document::Stylesheet {href: asset!("/assets/main.css")}
+        document::Stylesheet {href: asset!("assets/main.css")}
         Router::<Route> {}
     }
 }

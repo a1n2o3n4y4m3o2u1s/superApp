@@ -21,8 +21,8 @@ pub fn SmartContractsPage() -> Element {
     // Fetch contracts on mount
     let cmd_tx_effect = cmd_tx.clone();
     use_effect(move || {
-        cmd_tx_effect.send(AppCmd::FetchContracts);
-        cmd_tx_effect.send(AppCmd::FetchPendingContracts);
+        let _ = cmd_tx_effect.send(AppCmd::FetchContracts);
+        let _ = cmd_tx_effect.send(AppCmd::FetchPendingContracts);
     });
 
     let cmd_tx_accept = cmd_tx.clone();
@@ -87,7 +87,7 @@ pub fn SmartContractsPage() -> Element {
                     on_close: move |_| show_create_wizard.set(false),
                     on_create: move |_| {
                          show_create_wizard.set(false);
-                         cmd_tx_create.send(AppCmd::FetchContracts);
+                         let _ = cmd_tx_create.send(AppCmd::FetchContracts);
                     }
                 }
             } else if let Some(cid) = selected_contract_id.read().clone() {
@@ -243,7 +243,7 @@ fn ContractWizard(on_close: EventHandler<()>, on_create: EventHandler<()>) -> El
             // Standard Agreement
         "#.to_string();
 
-        cmd_tx_deploy.send(AppCmd::DeployContract { code, init_params: params }); // error ignored in context
+        let _ = cmd_tx_deploy.send(AppCmd::DeployContract { code, init_params: params }); // error ignored in context
         on_create.call(());
     };
 
@@ -362,7 +362,7 @@ fn ContractDetail(contract_id: String, on_back: EventHandler<()>) -> Element {
     // Fetch history on mount
     let cmd_tx_effect = cmd_tx.clone();
     use_effect(use_reactive(&contract_id, move |cid| {
-        cmd_tx_effect.send(AppCmd::FetchContractHistory { contract_id: cid });
+        let _ = cmd_tx_effect.send(AppCmd::FetchContractHistory { contract_id: cid });
     }));
 
     // Find the contract definition

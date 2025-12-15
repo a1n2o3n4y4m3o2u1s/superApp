@@ -19,8 +19,18 @@ pub fn GeohashComponent() -> Element {
 
     // Auto-detect geohash on mount
     let cmd_tx_effect = cmd_tx.clone();
+    let geohash_announce = current_geohash.clone();
+    let cmd_tx_announce = cmd_tx.clone();
+    
     use_effect(move || {
         let _ = cmd_tx_effect.send(AppCmd::AutoDetectGeohash);
+    });
+    
+    // Announce presence when geohash is resolved
+    use_effect(move || {
+         if !geohash_announce.is_empty() && geohash_announce != "Global" {
+             let _ = cmd_tx_announce.send(AppCmd::AnnouncePresence { geohash: geohash_announce.clone() });
+         }
     });
 
     // Fetch local posts when precision or geohash changes

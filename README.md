@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Rust-1.75+-black?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/Stack-Libp2p%20%7C%20Dioxus%20%7C%20Tokio-blue?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Architecture-DAG%20%2B%20Gossipsub-purple?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Security-AES256%20%7C%20X25519-green?style=for-the-badge" />
 </p>
 
 ---
@@ -16,163 +17,210 @@
 
 **P2P SuperApp** is a monolithic decentralized application that replaces the entire cloud stack (Social, Commerce, Governance, Messaging) with a single local-first binary. It runs no central servers; every feature relies on a custom **Directed Acyclic Graph (DAG)** synced via **Libp2p Gossipsub**.
 
-This document details the **7-Page Application Structure** and the actual implemented technology behind it, based on the current codebase.
+This is not just a social app; it is a **Digital Nation State** in a box, complete with its own constitution, economy, education system, and sovereign identity layer.
 
 ---
 
-## 📱 The 7-Page Architecture
+## 🏗️ System Architecture
 
- The application is divided into 7 core experiences, all sharing the same `Keypair` identity and `Store`.
+The application is split into a **Reactive Frontend** (Dioxus) and an **Async Backend** (Tokio/Libp2p), communicating via message passing (`AppCmd` <-> `AppEvent`).
 
-### 1. 🏠 Home (Social Core)
-*Implemented in `src/components/home_page.rs`*
+### 1. The Data Layer (DAG)
+All data is stored as immutable **DAG Nodes** (Content-Addressable).
+- **Structure**: `id` (CID), `prev` (Causality), `author` (PubKey), `sig` (Ed25519), `payload`.
+- **Storage**: SQLite (`blocks` table for data, `blocks_meta` for fast indexing, `blobs` for large media).
+- **Sync**: 
+    - **Gossipsub**: Real-time multicasting of new blocks on topic `blocks`.
+    - **Request-Response**: Direct fetching of missing history or blob content.
 
-A fully decentralized social feed similar to Instagram/Twitter.
-- **Protocol**: Nodes of type `post:v1`, `story:v1`, `comment:v1`, `like:v1`.
+### 2. The Network Layer
+- **Transport**: TCP + WebSocket + DNS (for global reach).
+- **Discovery**: 
+    - **Global**: Kademlia DHT (bootstrapped via IPFS public nodes).
+    - **Local**: mDNS (LAN) + Active Presence Heartbeats (`geohash:<prefix>` topics).
+- **Encryption**: Noise Protocol (Authentication) + Yamux (Stream Multiplexing).
+
+### 3. The Application Layer (Dioxus)
+A single-page application (SPA) rendered natively on Desktop (via WebView).
+- **State**: Global `AppState` signals tracked by Dioxus.
+- **Routing**: Custom `SuperWebShell` router handling `sp://` URIs.
+
+---
+
+## 📱 The 10-Module Experience
+
+The application is accessible via the **SuperWeb Browser** (`sp://`), which serves as the OS shell.
+
+### 1. 🏠 Home (`sp://home.super`)
+*Source: `src/components/home_page.rs`*
+A decentralized social feed.
+- **Protocol**: `post:v1`, `comment:v1`, `like:v1`, `story:v1`, `follow:v1`.
 - **Features**:
-    - **Global vs. Following Feed**: Users can switch between a firehose of all network content (`AppCmd::FetchPosts`) and a curated graph of followed peers (`AppCmd::FetchFollowingPosts`).
-    - **Encrypted Stories**: 24-hour ephemeral media. Media blobs are encrypted, and the decryption key is discarded after expiration.
-    - **Rich Media**: Supports image/video sharing via `BlobPayload`. The app caches blobs locally (`blob_cache`) to prevent re-fetching.
-    - **Social Actions**: Like (❤️), Reply (threaded comments), and Repost functionality.
+    - **Ephemeral Stories**: 24h media posts. The backend auto-prunes expired stories.
+    - **Blob Offloading**: Large images are stored in the `blobs` table, keeping the DAG metadata light.
+    - **Follow Graph**: Subscription model based on causality.
 
-### 2. 📍 Local (Geohash Discovery)
-*Implemented in `src/components/geohash_page.rs`*
+### 2. 📍 Local (`sp://local.super`)
+*Source: `src/components/geohash_page.rs`*
+Hyper-local networking based on Geohashes.
+- **Protocol**: `post:v1` (with `geohash` field), `AnnouncePresence`.
+- **Discovery Logic**: 
+    1. **Auto-Detect**: Backend resolves IP to Geohash.
+    2. **Subscribe**: Listens to `geohash:<prefix>` topic.
+    3. **Heartbeat**: Broadcasts `PRESENCE` every 60s to announce existence to neighbors.
+- **Features**: Precision Zoom (Country -> Neighborhood), Local Feed, "Users Nearby" list.
 
-A hyper-local mesh network for physical communities.
-- **Protocol**: `post:v1` with optional `geohash` field (e.g., `u4pru`).
-- **Features**:
-    - **Precision Zoom**: Users select their broadcast radius: Global → Continent → Country → Region → City → Neighborhood.
-    - **Auto-Detection**: The app uses IP-based geolocation (`AppCmd::AutoDetectGeohash`) to bootstrap discovery.
-    - **Local Feed**: Shows posts *only* relevant to the selected geohash prefix.
-    - **Nearby Peers**: Discovers other users on the same LAN (mDNS) or DHT bucket for offline-first coordination.
+### 3. 🌐 Browser (`sp://browser.super`)
+*Source: `src/components/browser_page.rs` & `vm.rs`*
+A decentralized web engine.
+- **Protocol**: `web:v1`.
+- **Engine**: 
+    - **Content**: Parses Markdown/HTML stored in DAG nodes.
+    - **WASM**: Executes sandboxed `\0asm` binaries for dynamic apps (`vm.rs`).
+    - **Search**: Distributed index over `tags`.
+- **Wiki Directory**: `sp://welcome` lists all published pages.
 
-### 3. 🌐 Web (SuperWeb Browser)
-*Implemented in `src/components/browser_page.rs` & `vm.rs`*
+### 4. 🏪 Market (`sp://market.super`)
+*Source: `src/components/marketplace_page.rs`*
+Trust-minimized Global Marketplace.
+- **Protocol**: `listing:v1`, `token:v1` (Transfers).
+- **Features**: 
+    - **Atomic Orders**: "Buy Now" triggers immediate settlement.
+    - **Certified Filters**: Filter listings by sellers with specific Education Certifications.
+    - **Contracts Integration**: Direct link to Smart Contracts for advanced trade logic.
 
-A built-in decentralized web browser.
-- **Protocol**: `web:v1`, `sp://` URI scheme.
-- **Features**:
-    - **Serverless Hosting**: Users publish websites directly to the mesh (`AppCmd::PublishWebPage`), with Title, Description, and Tags.
-    - **Search Engine**: Two modes: **Web Search** (for `sp://` sites) and **File Search** (for shared blobs). Queries the DHT tags.
-    - **WASM Support**: The browser detects `\0asm` magic bytes in content and spins up a sandboxed `WasmRuntime` (`vm.rs`) to execute dynamic apps client-side.
-    - **Governance Integration**: Redirects `sp://gov.super` to the native Governance page.
-
-### 4. 🏪 Market (P2P Economy)
-*Implemented in `src/components/marketplace_page.rs`*
-
-A trust-minimized marketplace using the native SUPER token.
-- **Protocol**: `listing:v1`, `token:v1`.
-- **Features**:
-    - **Listing Creation**: Title, Description, Price (SUPER), and optional Image.
-    - **Order Management**: Sellers can mark items as `Sold` or `Cancelled`.
-    - **Direct Purchase**: "Buy Now" triggers an atomic token transfer.
-    - **Asset Search**: specialized search filter for market listings.
-
-### 5. 🏛️ Govern (Direct Democracy)
-*Implemented in `src/components/governance_page.rs`*
-
-A comprehensive 1-Person-1-Vote constitution engine.
+### 5. 🏛️ Govern (`sp://gov.super`)
+*Source: `src/components/governance_page.rs`*
+The Operating System's Constitution.
 - **Protocol**: `proposal:v1`, `vote:v1`, `candidacy:v1`, `recall:v1`, `oversight_case:v1`.
-- **Features**:
-    - **Proposal Types**: `Standard`, `Constitutional` (66% threshold), `Emergency` (48h), `SetTax`, `DefineMinistries`.
-    - **Elections**: Citizens declare candidacy for Ministries (e.g., "VerificationAndIdentity"); others vote them into power.
-    - **Recall System**: Any official can be targeted for Recall. If the `RecallVote` passes (Remove > Keep), they are stripped of power.
-    - **Jury Duty**: The system assigns random citizens to `OversightCase` disputes. Jurors vote "Uphold" or "Dismiss" on reported content.
+- **Mechanisms**:
+    - **Taxation**: Citizens vote on `SetTax` proposals to adjust network fees.
+    - **Ministries**: `DefineMinistries` proposals structure the executive branch.
+    - **Elections**: Continuous voting for implementation candidates; requires `GovernanceRoles` certification.
+    - **Recalls**: Immediate removal of bad actors.
+    - **Jury Duty**: Random selection for content disputes (Ledger visible).
 
-### 6. 💬 Messages (Secure Comms)
-*Implemented in `src/components/messaging_page.rs`*
-
-Military-grade encrypted communication.
+### 6. 💬 Messages (`sp://messages.super`)
+*Source: `src/components/messaging_page.rs`*
+End-to-End Encrypted Messaging (Signal-style).
 - **Protocol**: `message:v1`, `group:v1`, `file:v1`.
-- **Encryption**: Uses **AES-256-GCM** for payloads and **X25519** for key exchange. Content is opaque to the network.
-- **Features**:
-    - **Direct Messages**: 1-on-1 encrypted chat.
-    - **Group Chats**: Users create named groups (`AppCmd::CreateGroup`). Messages are fanned out to all members.
-    - **Secure File Sharing**: Files are encrypted chunk-by-chunk on the client *before* upload. The recipient receives `[FILE:cid:key:nonce:mime:filename]` to decrypt locally.
+- **Architecture**:
+    - **Keys**: X25519 Ephemeral Key Exchange.
+    - **Cipher**: AES-256-GCM.
+    - **File Sharing**: Files are chunked, encrypted as blobs, and shared via `[FILE:cid:key:nonce:mime]` links.
+    - **Async UX**: 
+        - **Pending**: Start chat immediately (UI shows "📡 Connecting...").
+        - **Resolved**: Once profile/key is found, UI switches to "🔒 Secure Connection".
 
-### 7. 👤 Profile (Sovereign Identity)
-*Implemented in `src/components/profile_page.rs`*
-
-The user's command center.
+### 7. 👤 Profile (`sp://profile.super`)
+*Source: `src/components/profile_page.rs`*
 - **Protocol**: `profile:v1`, `proof:v1`.
 - **Features**:
-    - **Proof-of-Humanity**: Users must be Vouched (`AppCmd::Vouch`) by existing Verified citizens to gain `Verified` status.
-    - **Reputation Score**: A breakdown of trust across Verification, Content, Governance, and Storage axes.
-    - **UBI Wallet**: Verified users click "Claim UBI" to mint 10 SUPER/day. Includes a visual countdown timer.
-    - **Smart Contract Console**: A developer UI to Deploy (`AppCmd::DeployContract`) and Call (`AppCmd::CallContract`) raw logic on the network.
+    - **Reputation**: Computed score based on Verification + Contribution.
+    - **UBI**: Daily "Claim" logic for verified humans.
+    - **Developer Console**: Deploy/Call WASM Smart Contracts (`contract:v1`, `contract_call:v1`).
+
+### 8. 🎓 Education (`sp://edu.super`)
+*Source: `src/components/education_page.rs`*
+A complete Learning Management System (LMS) on-chain.
+- **Protocol**: `course:v1`, `exam:v1`, `certification:v1`.
+- **Flow**:
+    1. **Create Course**: Markdown content, custom categories (e.g., CivicLiteracy).
+    2. **Create Exam**: Multiple choice questions, passing score threshold.
+    3. **Certify**: Passing an exam mints a `certification:v1` DAG node, unlocking Governance roles.
+
+### 9. ✅ Verification (`sp://verify.super`)
+*Source: `src/components/verification_page.rs`*
+The gateway to citizenship.
+- **Status**: `Unverified` -> `EligibleForFounder` -> `Founder` (First 100) -> `Verified`.
+- **Process**: Submit Application (Bio/Photo) -> Community Vouching.
+- **Grants**: UBI Eligibility, Voting Rights.
+
+### 10. 📊 Transparency (`sp://transparency.super`)
+*Source: `src/components/transparency_page.rs`*
+Real-time "Block Explorer" for the nation.
+- **Public Ledger**: Live stream of all `Token`, `Vote`, `Proposal`, and `Contract` events.
+- **Network Stats**: Total Blocks & Storage used.
 
 ---
 
-## 🛠️ Technical Implementation Details
-
-### Data Layer: The DAG
-Defined in `src/backend/dag.rs`.
-Every piece of data is a `DagNode` containing:
-- `id` (CID: Content ID)
-- `prev` (Parent CIDs for causality)
-- `author` (PubKey)
-- `sig` (Ed25519 Signature)
-- `payload` (**25+ Types** implemented: `Post`, `Vote`, `Recall`, `Listing`, `Contract`, etc.)
-
-### Execution Layer: The VM
-Defined in `src/backend/vm.rs`.
-- **Hybrid State**: Uses `sqlite` for persistent indexing and `HashMap` for hot contract state.
-- **WASM Runtime**: Executes untrusted code (Smart Contracts & Web Apps) in a secure sandbox.
-- **KV Store**: Contracts manipulate a deterministic Key-Value store (`set`, `delete`).
-
-### Network Layer: Libp2p
-Defined in `src/backend/network.rs`.
-- **Transport**: TCP + WebSocket + DNS.
-- **Discovery**: Kademlia DHT (Global) + mDNS (Local).
-- **Gossip**: `gossipsub` with topic validation ensures generic spam is rejected.
-
----
-
-## 🗺️ Progress & Implementation Matrix
-
-Based on deep code analysis of `src/` and `plan.md`:
-
-### ✅ Fully Implemented
-- [x] **Core P2P Stack**: Networking, DAG, Storage, Identity.
-- [x] **UI Shell**: 7-Page Navigation System (Desktop).
-- [x] **Social**: Feed, Stories (blob-based), Follow Graph, Comments, Likes.
-- [x] **Messaging**: E2E Encryption, Group logic, File Sharing (AES-256).
-- [x] **Governance**: Proposals (Tax/Ministries), Voting, Candidacy, Recalls, Jury Duty.
-- [x] **Marketplace**: Listings, Buying, Status Updates.
-- [x] **Browser**: URL bar, Content Rendering, Publishing, Search.
-- [x] **Identity**: Profiles, Vouching, Reputation Calculation.
-- [x] **Economy**: UBI Timer, Minting, Transfers, Balance Tracking.
-- [x] **Smart Contracts**: Deployment and Execution console.
-
-### 🔄 In Progress / Partial
-- [ ] **Mobile Layouts**: `src/components/*.rs` are optimized for Desktop.
-- [ ] **Advanced Reputation Math**: Basic counters exist; EigenTrust algorithm pending.
-
-### 🔮 Future
-- [ ] **WebRTC**: Audio/Video calls (placeholder in plan).
-- [ ] **iOS/Android Ports**: Native compilation targets.
-
----
-
-## 📦 Getting Started
+## 🛠️ Developer Guide
 
 ### Prerequisites
-- **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **Rust**: `rustup update stable`
 - **Dioxus CLI**: `cargo install dioxus-cli`
-- **System Dependencies**: `openssl`, `pkg-config`
+- **Dependencies**: `openssl`, `pkg-config`, `sqlite3`
 
-### Running the Node
+### Build Instructions
+
+#### MacOS / Linux
 ```bash
-# 1. Clone
-git clone https://github.com/your-username/superApp.git
-cd superApp
-
-# 2. Run Desktop App (Hot Reload)
+# Run Dev Server (Fast Rebuilds)
 dx serve --desktop
+
+# Release Build
+dx build --release --desktop
+```
+
+#### Windows
+Uses `build-windows.yml` workflow.
+1. Requires `assets/` directory with `main.css`.
+2. Requires `icons/icon.ico`.
+3. Build artifact: `.msi` installer.
+
+### Codebase Map
+```
+src/
+├── main.rs                 # Frontend Entrypoint (SuperWebShell Router)
+├── backend/
+│   ├── mod.rs              # Event Loop, Command Handlers, P2P Swarm
+│   ├── network.rs          # Libp2p Configuration (TCP, Noise, Yamux, Kademlia)
+│   ├── store.rs            # SQLite Database & Blob Storage logic
+│   ├── dag.rs              # DAG Node Structs & Payload Enums (The "Protocol")
+│   ├── identity.rs         # Keypair Management (Ed25519)
+│   ├── vm.rs               # WASM Runtime for Smart Contracts
+│   └── wasm.rs             # WebAssembly Logic (if compiling for web target)
+└── components/             # UI Components
+    ├── superweb_shell.rs   # Main Router (sp://)
+    ├── education_page.rs   # LMS System
+    ├── transparency_page.rs# Public Ledger
+    ├── browser_page.rs     # Web Engine
+    ├── ...
 ```
 
 ---
 
-## 📄 License
-**Proprietary / Closed Source**. All rights reserved.
-Codebase analysis and documentation generated by Antigravity Agent.
+## 🔍 Protocol Reference (Payload Types)
+
+| Payload | Description |
+| :--- | :--- |
+| `profile:v1` | User Identity (Name, Bio, Avatar) |
+| `post:v1` | Social Content (Text + Media CIDs) |
+| `story:v1` | Ephemeral 24h Content |
+| `message:v1` | Encrypted DM |
+| `group:v1` | Group Chat Meta |
+| `token:v1` | Currency Transfer |
+| `web:v1` | Decentralized Website |
+| `listing:v1` | Marketplace Item |
+| `proposal:v1` | Governance Proposal (Law) |
+| `vote:v1` | Vote on Proposal |
+| `candidacy:v1` | Election Candidacy |
+| `recall:v1` | Vote to Remove Official |
+| `course:v1` | Educational Content |
+| `exam:v1` | Exam Config |
+| `exam_submission:v1` | Student Answers |
+| `certification:v1` | Proof of Skill |
+| `contract:v1` | WASM Smart Contract Code |
+
+---
+
+## 🔐 Security & Privacy
+
+- **Encryption**: All private data (Messages, Files) is encrypted client-side using **AES-256-GCM**.
+- **Anonymity**: Network traffic is encrypted (Noise). No central metadata server.
+- **Verification**: Proof-of-Humanity system separates Humans from Bots for UBI/Voting.
+- **Sovereignty**: Users can export/delete their local `store.db`.
+
+---
+
+**Generated by Antigravity Agent** | *System v0.1.0*

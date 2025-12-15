@@ -40,6 +40,7 @@ pub fn MessagingComponent() -> Element {
     use_effect(move || {
         let t = target_effect.clone();
         if !t.is_empty() {
+             *app_state.viewed_profile.write() = None; // Clear stale profile
              let _ = cmd_tx_effect.send(AppCmd::FetchMessages { peer_id: t.clone() });
              let _ = cmd_tx_effect.send(AppCmd::FetchUserProfile { peer_id: t });
         }
@@ -53,6 +54,8 @@ pub fn MessagingComponent() -> Element {
              let _ = cmd_tx_effect2.send(AppCmd::FetchGroups);
         }
     });
+
+
 
     // Handle Blob Created Event
     use_effect(move || {
@@ -293,7 +296,15 @@ pub fn MessagingComponent() -> Element {
                                         p { class: "font-semibold", 
                                             "{group_name}" 
                                         }
-                                        span { class: "badge badge-online text-xs", "🔒 Encrypted" }
+                                        {
+                                            if current_group.is_some() {
+                                                rsx!{ span { class: "badge badge-online text-xs", "🔒 Group Encrypted" } }
+                                            } else if app_state.viewed_profile.read().is_some() {
+                                                rsx!{ span { class: "badge badge-success text-xs", "🔒 Secure Connection" } }
+                                            } else {
+                                                rsx!{ span { class: "badge badge-warning text-xs animate-pulse", "📡 Connecting..." } }
+                                            }
+                                        }
                                     }
                                     p { class: "text-xs text-[var(--text-muted)] font-mono truncate", 
                                         if let Some(gid) = &current_group { "{gid}" } else { "{target}" } 

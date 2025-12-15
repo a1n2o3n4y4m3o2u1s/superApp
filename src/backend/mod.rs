@@ -30,6 +30,7 @@ use rand::rngs::OsRng;
 use rand::Rng;
 use tokio::sync::mpsc;
 use std::time::Duration;
+use base64::{Engine as _, engine::general_purpose};
 
 #[derive(Debug)]
 pub enum AppCmd {
@@ -57,6 +58,7 @@ pub enum AppCmd {
     FetchUbiTimer,
     CheckVerificationStatus,
     FetchUserProfile { peer_id: String },
+    AnnouncePresence { geohash: String },
     PublishWebPage { url: String, title: String, content: String, description: String, tags: Vec<String> },
     FetchWebPage { url: String },
     RegisterName { name: String, target: String },
@@ -233,6 +235,8 @@ pub struct Backend {
     keypair: Keypair,
     encryption_keypair: x25519_dalek::StaticSecret,
     pending_replications: HashMap<String, (dag::DagNode, std::time::Instant)>,
+    current_geohash: Option<String>,
+    last_heartbeat: std::time::Instant,
 }
 
 impl Backend {
@@ -294,6 +298,8 @@ impl Backend {
             keypair,
             encryption_keypair,
             pending_replications: HashMap::new(),
+            current_geohash: None,
+            last_heartbeat: std::time::Instant::now(),
         })
     }
 
@@ -339,6 +345,22 @@ impl Backend {
                     }
                 } => {
                     self.check_pending_replications();
+                    
+                    // Heartbeat (every 60s)
+                    if self.last_heartbeat.elapsed() > std::time::Duration::from_secs(60) {
+                         if let Some(gh) = &self.current_geohash {
+                             let topic = gossipsub::IdentTopic::new(format!("geohash:{}", gh));
+                             let _ = self.swarm.behaviour_mut().gossipsub.publish(topic, "PRESENCE".as_bytes());
+                         }
+                         self.last_heartbeat = std::time::Instant::now();
+                    }
+                    
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if let Err(e) = self.store.prune_expired_stories() {
+                             eprintln!("Failed to prune stories: {:?}", e);
+                        }
+                    }
                 }
             }
         }
@@ -793,6 +815,7 @@ impl Backend {
                     eprintln!("Cannot publish blob: User is not verified.");
                     return;
                 }
+                let data_clone = data.clone();
                 let payload = dag::DagPayload::Blob(dag::BlobPayload { mime_type, data });
                 
                 let author_pubkey = self.keypair.public();
@@ -816,6 +839,12 @@ impl Backend {
                 ) {
                     Ok(node) => {
                         println!("Created blob node: {}", node.id);
+                        // Store in dedicated blob storage
+                        if let Ok(bytes) = general_purpose::STANDARD.decode(&data_clone) {
+                            if let Err(e) = self.store.put_blob(&node.id, &bytes) {
+                                eprintln!("Failed to put blob: {:?}", e);
+                            }
+                        }
                         if let Err(e) = self.store.put_node(&node) {
                             eprintln!("Failed to store blob node: {:?}", e);
                             return;
@@ -984,6 +1013,7 @@ impl Backend {
                     0
                 ) {
                     Ok(node) => {
+
                         println!("Created story node: {}", node.id);
                         if let Err(e) = self.store.put_node(&node) {
                             eprintln!("Failed to store story node: {:?}", e);
@@ -1541,6 +1571,20 @@ impl Backend {
                         eprintln!("Failed to fetch user profile: {:?}", e);
                         let _ = self.event_tx.send(AppEvent::UserProfileFetched(None));
                     }
+                }
+            }
+
+            AppCmd::AnnouncePresence { geohash } => {
+                println!("Announcing presence in {}", geohash);
+                self.current_geohash = Some(geohash.clone());
+                let topic = gossipsub::IdentTopic::new(format!("geohash:{}", geohash));
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+                     eprintln!("Failed to subscribe to geohash: {:?}", e);
+                }
+                // Publish initial presence
+                let presence_msg = "PRESENCE".as_bytes();
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, presence_msg) {
+                     eprintln!("Failed to publish presence: {:?}", e);
                 }
             }
 
@@ -3679,6 +3723,23 @@ impl Backend {
                 message_id: _,
                 message,
             })) => {
+                let topic = message.topic.as_str();
+                if topic.starts_with("geohash:") {
+                    // Presence message
+                    let source = message.source;
+                    if let Some(peer_id) = source {
+                        let peer_str = peer_id.to_string();
+                        // If it's not me, emit discovery
+                        if peer_id != *self.swarm.local_peer_id() {
+                             println!("Discovered peer via presence: {}", peer_str);
+                             // We can try to dial them to ensure connection
+                             // self.swarm.dial(peer_id); // Might fail if no address? But Gossipsub implies connection or relay.
+                             let _ = self.event_tx.send(AppEvent::PeerDiscovered(peer_str));
+                        }
+                    }
+                    return;
+                }
+
                 let cid = String::from_utf8_lossy(&message.data).to_string();
                 println!("Received CID via gossip: {}", cid);
 
