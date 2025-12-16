@@ -32,15 +32,17 @@ pub fn MessagingComponent() -> Element {
     let local_id = app_state.local_peer_id.read().clone();
 
     // Fetch messages when target changes
+    // Fetch messages when target changes
     let cmd_tx_effect = cmd_tx.clone();
     let cmd_tx_effect2 = cmd_tx.clone();
     let target_effect = target.clone();
     let group_effect = current_group.clone();
+    let mut viewed_profile = app_state.viewed_profile;
     
     use_effect(move || {
         let t = target_effect.clone();
         if !t.is_empty() {
-             *app_state.viewed_profile.write() = None; // Clear stale profile
+             *viewed_profile.write() = None; // Clear stale profile
              let _ = cmd_tx_effect.send(AppCmd::FetchMessages { peer_id: t.clone() });
              let _ = cmd_tx_effect.send(AppCmd::FetchUserProfile { peer_id: t });
         }
