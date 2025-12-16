@@ -59,6 +59,7 @@ A decentralized social feed.
     - **Ephemeral Stories**: 24h media posts. The backend auto-prunes expired stories.
     - **Blob Offloading**: Large images are stored in the `blobs` table, keeping the DAG metadata light.
     - **Follow Graph**: Subscription model based on causality.
+    - **Official Announcements**: Elected officials can broadcast high-visibility updates.
 
 ### 2. 📍 Local (`sp://local.super`)
 *Source: `src/components/geohash_page.rs`*
@@ -99,6 +100,9 @@ The Operating System's Constitution.
     - **Elections**: Continuous voting for implementation candidates; requires `GovernanceRoles` certification.
     - **Recalls**: Immediate removal of bad actors.
     - **Jury Duty**: Random selection for content disputes (Ledger visible).
+    - **Official Powers**: Active officials have unique capabilities:
+        - **Pin Proposals**: Elevate priority legislation to the top of the queue.
+        - **Broadcast**: Post official announcements to the global feed.
 
 ### 6. 💬 Messages (`sp://messages.super`)
 *Source: `src/components/messaging_page.rs`*
@@ -108,9 +112,11 @@ End-to-End Encrypted Messaging (Signal-style).
     - **Keys**: X25519 Ephemeral Key Exchange.
     - **Cipher**: AES-256-GCM.
     - **File Sharing**: Files are chunked, encrypted as blobs, and shared via `[FILE:cid:key:nonce:mime]` links.
-    - **Async UX**: 
-        - **Pending**: Start chat immediately (UI shows "📡 Connecting...").
-        - **Resolved**: Once profile/key is found, UI switches to "🔒 Secure Connection".
+    - **Rich UX**: 
+        - **Unified Inbox**: Single searchable list for both Direct Messages and Groups.
+        - **Quick Actions**: Dedicated "New Chat" and "New Group" flows for rapid connection.
+        - **Media**: Secure image sharing with encrypted blob storage.
+        - **Premium UI**: Desktop-class interface with glassmorphism, slide-in animations, and read receipts ("✓✓").
 
 ### 7. 👤 Profile (`sp://profile.super`)
 *Source: `src/components/profile_page.rs`*
