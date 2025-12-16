@@ -1425,6 +1425,45 @@ impl Store {
     }
 
 
+    /// Get the current list of elected officials (Ministry -> Pubkey)
+    pub fn get_active_officials(&self) -> Result<std::collections::HashMap<String, String>, Box<dyn std::error::Error>> {
+        let ministries = self.get_active_ministries()?;
+        let mut officials = std::collections::HashMap::new();
+
+        for ministry in ministries {
+            // Get candidates for this ministry
+            let candidates = self.get_candidates(&ministry)?;
+            
+            // Tally votes
+            let mut best_candidate: Option<(String, usize)> = None;
+            
+            for candidate_node in candidates {
+                if let DagPayload::Candidacy(_) = candidate_node.payload {
+                    let votes = self.get_candidate_tally(&candidate_node.id)?;
+                    
+                    if votes > 0 {
+                        match best_candidate {
+                            Some((_, max_votes)) => {
+                                if votes > max_votes {
+                                    best_candidate = Some((candidate_node.author.clone(), votes));
+                                }
+                            }
+                            None => {
+                                best_candidate = Some((candidate_node.author.clone(), votes));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((winner_pubkey, _)) = best_candidate {
+                officials.insert(ministry, winner_pubkey);
+            }
+        }
+
+        Ok(officials)
+    }
+
     pub fn get_reputation(&self, pubkey: &str) -> Result<crate::backend::dag::ReputationDetails, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         
@@ -1469,6 +1508,13 @@ impl Store {
                     DagPayload::Vote(_) => vote_count += 1,
                     _ => {}
                 }
+            }
+        }
+
+        // 3. Elected Official Bonus
+        if let Ok(officials) = self.get_active_officials() {
+            if officials.values().any(|p| p == pubkey) {
+                governance_score += 100; // Big bonus for being an elected official
             }
         }
 

@@ -174,6 +174,8 @@ pub struct PostPayload {
     pub attachments: Vec<String>, // CIDs of blobs
     #[serde(default)]
     pub geohash: Option<String>, // Optional location tag
+    #[serde(default)]
+    pub announcement: bool, // Exclusive for elected officials
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -229,6 +231,8 @@ pub struct ProposalPayload {
     pub title: String,
     pub description: String,
     pub r#type: ProposalType,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

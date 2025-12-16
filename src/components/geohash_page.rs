@@ -51,6 +51,7 @@ pub fn GeohashComponent() -> Element {
                     content: new_local_post(),
                     attachments: vec![],
                     geohash: Some(geohash_prefix.clone()),
+                    announcement: false,
                 };
                 let _ = cmd_tx.send(cmd);
                 new_local_post.set(String::new());

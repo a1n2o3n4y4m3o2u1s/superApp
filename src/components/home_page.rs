@@ -19,6 +19,7 @@ pub fn HomeComponent() -> Element {
     
     let mut new_post_content = use_signal(|| "".to_string());
     let mut attached_cids = use_signal(|| Vec::<String>::new());
+    let mut announcement = use_signal(|| false);
     
     let mut last_processed_blob = use_signal(|| None::<String>);
     let is_uploading_story = use_signal(|| false);
@@ -64,12 +65,14 @@ pub fn HomeComponent() -> Element {
                     content: new_post_content(),
                     attachments: attached_cids().clone(),
                     geohash: None,
+                    announcement: announcement(),
                 };
                 if let Err(e) = cmd_tx.send(cmd) {
                     eprintln!("Failed to send PublishPost command: {:?}", e);
                 } else {
                     new_post_content.set("".to_string());
                     attached_cids.set(Vec::new());
+                    announcement.set(false);
                 }
             }
         }
@@ -271,6 +274,16 @@ pub fn HomeComponent() -> Element {
                     }
                 }
                 
+                div { class: "form-group flex items-center gap-2 mb-4 p-2 rounded bg-[var(--bg-secondary)] border border-[var(--border-color)]",
+                    input {
+                        r#type: "checkbox",
+                        checked: "{announcement}",
+                        onchange: move |e| announcement.set(e.checked()),
+                        class: "w-4 h-4 cursor-pointer"
+                    }
+                    label { class: "text-sm font-bold cursor-pointer", onclick: move |_| announcement.set(!announcement()), "📢 Official Announcement (Elected Officials Only)" }
+                }
+                
                 if !attached_cids().is_empty() {
                     div { class: "flex gap-3 mb-4 overflow-x-auto pb-2",
                         for cid in attached_cids() {
@@ -331,11 +344,12 @@ pub fn HomeComponent() -> Element {
                     }
                 } else {
                     for node in posts() {
-                        if let DagPayload::Post(PostPayload { content, attachments, .. }) = &node.payload {
+                        if let DagPayload::Post(PostPayload { content, attachments, announcement, .. }) = &node.payload {
                             {
                                 let post_id = node.id.clone();
                                 let app_state = app_state.clone();
                                 let cmd_tx = cmd_tx.clone();
+                                let is_announcement = *announcement;
                                 
                                 let mut show_reply = use_signal(|| false);
                                 let mut reply_content = use_signal(|| "".to_string());
@@ -363,8 +377,18 @@ pub fn HomeComponent() -> Element {
 
                                 rsx! {
                                     div { 
-                                        class: "post",
+                                        class: if is_announcement { 
+                                            "post border-2 border-yellow-500 bg-[var(--bg-secondary)] shadow-lg shadow-yellow-500/10" 
+                                        } else { 
+                                            "post" 
+                                        },
                                         key: "{node.id}",
+                                        
+                                        if is_announcement {
+                                            div { class: "bg-yellow-500 text-black text-xs font-bold px-3 py-1 -mt-4 -ml-4 -mr-4 mb-4 rounded-t-lg flex items-center gap-2",
+                                                span { "📢 OFFICIAL ANNOUNCEMENT" }
+                                            }
+                                        }
                                         
                                         div { class: "post-header",
                                             div { class: "avatar",

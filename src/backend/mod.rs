@@ -38,7 +38,7 @@ pub enum AppCmd {
     PublishBlock(dag::DagNode),
     PublishProfile { name: String, bio: String, photo: Option<String> },
     Vouch { target_peer_id: String },
-    PublishPost { content: String, attachments: Vec<String>, geohash: Option<String> },
+    PublishPost { content: String, attachments: Vec<String>, geohash: Option<String>, announcement: bool },
     PublishBlob { mime_type: String, data: String },
     FetchPosts,
     FetchLocalPosts { geohash_prefix: String },
@@ -92,7 +92,7 @@ pub enum AppCmd {
     PayContract { contract_id: String, amount: u64 },
     FetchPendingContracts, // Contracts awaiting my acceptance
     FetchPublicLedger,
-    PublishProposal { title: String, description: String, r#type: dag::ProposalType },
+    PublishProposal { title: String, description: String, r#type: dag::ProposalType, pinned: bool },
     VoteProposal { proposal_id: String, vote: dag::VoteType },
     FetchProposals,
     FetchProposalVotes { proposal_id: String },
@@ -755,12 +755,24 @@ impl Backend {
                     Err(e) => eprintln!("Failed to fetch local posts: {:?}", e),
                 }
             }
-            AppCmd::PublishPost { content, attachments, geohash } => {
+            AppCmd::PublishPost { content, attachments, geohash, announcement } => {
                 if !self.is_caller_verified() {
                     eprintln!("Cannot publish post: User is not verified.");
                     return;
                 }
-                let payload = dag::DagPayload::Post(dag::PostPayload { content, attachments, geohash });
+                
+                // Permission check for announcements
+                if announcement {
+                    let author_pubkey = self.keypair.public();
+                    let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                    let officials = self.store.get_active_officials().unwrap_or_default();
+                    if !officials.values().any(|p| p == &author_hex) {
+                        eprintln!("Cannot publish announcement: User is not an elected official.");
+                        return;
+                    }
+                }
+                
+                let payload = dag::DagPayload::Post(dag::PostPayload { content, attachments, geohash, announcement });
                 
                 // Get previous head for this user if any
                 let author_pubkey = self.keypair.public();
@@ -1588,38 +1600,7 @@ impl Backend {
                 }
             }
 
-            AppCmd::FetchFollowingPosts => {
-                // For now, just simplistic fetch of all posts from followed users + self.
-                // Optimally we'd do this incrementally or with a specific DHT query strategy.
-                // Here we cheat a bit and scan local cache or known peers if possible, but
-                // since we don't have a specific "get posts from X" strictly replicated, 
-                // we rely on what we've seen via gossipsub or direct replication.
-                // In a real P2P app, you'd query each followed peer for their latest head.
-                
-                // Let's simplified: just return all posts we have locally that match followed users
-                let all_posts = match self.store.get_posts_global() {
-                    Ok(p) => p,
-                    Err(_) => vec![],
-                };
-                
-                // Filter
-                // Need to enable access to `following` list here or re-fetch it.
-                // We'll re-fetch following list locally
-                 let my_pubkey = self.keypair.public();
-                 let my_hex = libp2p::PeerId::from_public_key(&my_pubkey).to_string();
-                 
-                 let following = match self.store.get_following(&my_hex) {
-                     Ok(f) => f,
-                     Err(_) => vec![],
-                 };
-                 let following_set: std::collections::HashSet<_> = following.into_iter().collect();
-                 
-                 let filtered: Vec<_> = all_posts.into_iter()
-                    .filter(|p| p.author == my_hex || following_set.contains(&p.author))
-                    .collect();
-                    
-                 let _ = self.event_tx.send(AppEvent::FollowingPostsFetched(filtered));
-            }
+
 
             AppCmd::FetchTaxRate => {
                 match self.store.get_current_tax_rate() {
@@ -2899,30 +2880,38 @@ impl Backend {
                     Err(e) => eprintln!("Failed to search listings: {:?}", e),
                 }
             }
-            AppCmd::PublishProposal { title, description, r#type } => {
+            AppCmd::PublishProposal { title, description, r#type, pinned } => {
                 if !self.is_caller_verified() {
                     eprintln!("Cannot publish proposal: User is not verified.");
                     return;
                 }
 
-                // Certification Gating
+                // Permission check for pinning
+                if pinned {
+                    let author_pubkey = self.keypair.public();
+                    let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                    let officials = self.store.get_active_officials().unwrap_or_default();
+                    if !officials.values().any(|p| p == &author_hex) {
+                        eprintln!("Cannot pin proposal: User is not an elected official.");
+                        return;
+                    }
+                }
+
+                // Check certifications for specific proposal types
                 let author_pubkey = self.keypair.public();
                 let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
 
-                match &r#type {
-                    dag::ProposalType::Constitutional | dag::ProposalType::DefineMinistries(_) | dag::ProposalType::SetTax(_) => {
+                match r#type {
+                    dag::ProposalType::Constitutional | dag::ProposalType::SetTax(_) | dag::ProposalType::DefineMinistries(_) => {
                          if !self.has_certification(&author_hex, "CivicLiteracy") {
-                             eprintln!("Cannot publish proposal: Missing 'CivicLiteracy' certification.");
+                             eprintln!("Cannot publish sensitive proposal: Missing CivicLiteracy certification.");
                              return;
                          }
                     },
                     _ => {}
                 }
 
-                let payload = dag::DagPayload::Proposal(dag::ProposalPayload { title, description, r#type });
-                
-                let author_pubkey = self.keypair.public();
-                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                let payload = dag::DagPayload::Proposal(dag::ProposalPayload { title, description, r#type, pinned });
                 
                 let prev = match self.store.get_head(&author_hex) {
                     Ok(Some(cid)) => vec![cid],

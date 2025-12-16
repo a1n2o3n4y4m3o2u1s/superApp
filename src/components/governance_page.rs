@@ -16,6 +16,7 @@ pub fn GovernanceComponent() -> Element {
     let mut proposal_type = use_signal(|| "Standard".to_string());
     let mut tax_rate = use_signal(|| 0i64);
     let mut defined_ministries = use_signal(|| vec![]);
+    let mut pinned = use_signal(|| false);
     
     // Form state for candidacy
     let mut selected_ministry = use_signal(|| "VerificationAndIdentity".to_string());
@@ -95,10 +96,12 @@ pub fn GovernanceComponent() -> Element {
             title: title(),
             description: description(),
             r#type: p_type,
+            pinned: pinned(),
         });
 
         title.set("".to_string());
         description.set("".to_string());
+        pinned.set(false);
         show_create_modal.set(false);
     };
 
@@ -208,8 +211,23 @@ pub fn GovernanceComponent() -> Element {
                                 }
                             }
                         } else {
+                            // Sort proposals: Pinned first, then by timestamp
+                            let mut sorted_proposals = proposals.clone();
+                            sorted_proposals.sort_by(|a, b| {
+                                let a_pinned = if let DagPayload::Proposal(p) = &a.payload { p.pinned } else { false };
+                                let b_pinned = if let DagPayload::Proposal(p) = &b.payload { p.pinned } else { false };
+                                
+                                if a_pinned && !b_pinned {
+                                    std::cmp::Ordering::Less
+                                } else if !a_pinned && b_pinned {
+                                    std::cmp::Ordering::Greater
+                                } else {
+                                    b.timestamp.cmp(&a.timestamp)
+                                }
+                            });
+
                             rsx! {
-                                for node in proposals.iter() {
+                                for node in sorted_proposals.iter() {
                                     if let DagPayload::Proposal(prop) = &node.payload {
                                         {
                                             let pid = node.id.clone();
@@ -238,11 +256,16 @@ pub fn GovernanceComponent() -> Element {
                                                 _ => "text-[var(--text-muted)]",
                                             };
                                             
+                                            let pinned_class = if prop.pinned { "border-l-4 border-l-yellow-500 bg-yellow-900/10" } else { "" };
+                                            
                                             rsx! {
-                                                div { key: "{pid}", class: "panel",
+                                                div { key: "{pid}", class: "panel transition-all duration-300 hover:transform hover:scale-[1.01] {pinned_class}",
                                                     div { class: "flex justify-between items-start mb-4",
                                                         div {
                                                             div { class: "flex gap-2 items-center mb-2",
+                                                                if prop.pinned {
+                                                                    span { class: "text-xl", "📌" }
+                                                                }
                                                                 span { class: "px-2 py-0.5 rounded text-xs bg-[var(--bg-secondary)]", "{type_str}" }
                                                                 span { class: "font-bold text-sm {status_color} border border-current px-2 py-0.5 rounded", "{status}" }
                                                             }
@@ -742,6 +765,16 @@ pub fn GovernanceComponent() -> Element {
                                     oninput: move |e| description.set(e.value()),
                                     placeholder: "Describe the proposal in detail..."
                                 }
+                            }
+                            
+                            div { class: "form-group flex items-center gap-2 mt-2 p-2 rounded bg-[var(--bg-secondary)] border border-[var(--border-color)]",
+                                input {
+                                    r#type: "checkbox",
+                                    checked: "{pinned}",
+                                    onchange: move |e| pinned.set(e.checked()),
+                                    class: "w-4 h-4"
+                                }
+                                label { class: "text-sm font-bold", "📌 Pin Proposal (Elected Officials Only)" }
                             }
 
                             div { class: "flex justify-end gap-3 mt-4",
