@@ -24,7 +24,7 @@ use std::path::Path;
 use store::Store;
 use aes_gcm::{
     aead::{Aead, KeyInit, AeadCore},
-    Aes256Gcm,
+    Aes256Gcm, Nonce,
 };
 use rand::rngs::OsRng;
 use rand::Rng;
@@ -166,9 +166,12 @@ pub enum AppEvent {
     UserProfileFetched(Option<dag::ProfilePayload>),
     WebPageFetched { url: String, content: Option<String> },
     Listening(String),
+    #[allow(dead_code)]
     NameResolved { name: String, target: Option<String> },
     StorageStatsFetched { block_count: usize, total_bytes: usize },
+    #[allow(dead_code)]
     StorageQuotaFetched { quota_mb: Option<u64>, used_bytes: usize, percent: u8 },
+    #[allow(dead_code)]
     StorageWarning { used_percent: u8, message: String },
     LocalPostsFetched(Vec<dag::DagNode>),
     ListingsFetched(Vec<dag::DagNode>),
@@ -179,6 +182,7 @@ pub enum AppEvent {
         contract_id: String,
         state: String,
     },
+    #[allow(dead_code)]
     ContractHistoryFetched { contract_id: String, history: Vec<dag::DagNode> },
     PendingContractsFetched(Vec<dag::DagNode>),
     PublicLedgerFetched(Vec<dag::DagNode>),
@@ -204,6 +208,7 @@ pub enum AppEvent {
     MinistriesFetched(Vec<String>),
     StoriesFetched(Vec<dag::DagNode>),
     FollowingFetched(Vec<String>),
+    #[allow(dead_code)]
     FollowersFetched(Vec<String>),
     UserPostsFetched(Vec<dag::DagNode>),
     FollowingPostsFetched(Vec<dag::DagNode>),
@@ -215,6 +220,7 @@ pub enum AppEvent {
     ExamSubmitted { exam_id: String, score: u8, passed: bool },
     // Application Verification System
     PendingApplicationsFetched(Vec<dag::DagNode>),
+    #[allow(dead_code)]
     ApplicationVotesFetched { application_id: String, approvals: usize, rejections: usize, required: usize },
 }
 
@@ -366,6 +372,7 @@ impl Backend {
         }
     }
 
+    #[allow(dead_code)]
     pub fn dial(&mut self, addr: libp2p::Multiaddr) -> Result<(), Box<dyn std::error::Error>> {
         self.swarm.dial(addr)?;
         Ok(())
@@ -375,6 +382,7 @@ impl Backend {
         *self.swarm.local_peer_id()
     }
 
+    #[allow(dead_code)]
     pub fn get_first_listener(&self) -> Option<libp2p::Multiaddr> {
         self.swarm.listeners().next().cloned()
     }
@@ -485,7 +493,7 @@ impl Backend {
                         
                         if let Ok(nonce_bytes) = hex::decode(&msg.nonce) {
                             if nonce_bytes.len() == 12 {
-                                let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(&nonce_bytes);
+                                let nonce = Nonce::from_slice(&nonce_bytes);
                                 if let Ok(ciphertext_bytes) = hex::decode(&msg.ciphertext) {
                                     if let Ok(plaintext) = key.decrypt(nonce, ciphertext_bytes.as_ref()) {
                                         return String::from_utf8_lossy(&plaintext).to_string();
@@ -575,6 +583,321 @@ impl Backend {
         }
     }
 
+    async fn process_publish_post(&mut self, content: String, attachments: Vec<String>, geohash: Option<String>, announcement: bool) {
+        if !self.is_caller_verified() {
+            eprintln!("Cannot publish post: User is not verified.");
+            return;
+        }
+        
+        // Permission check for announcements
+        if announcement {
+            let author_pubkey = self.keypair.public();
+            let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+            let officials = self.store.get_active_officials().unwrap_or_default();
+            if !officials.values().any(|p| p == &author_hex) {
+                eprintln!("Cannot publish announcement: User is not an elected official.");
+                return;
+            }
+        }
+        
+        let payload = dag::DagPayload::Post(dag::PostPayload { content, attachments, geohash, announcement });
+        
+        // Get previous head for this user if any
+        let author_pubkey = self.keypair.public();
+        let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+        
+        let prev = match self.store.get_head(&author_hex) {
+            Ok(Some(cid)) => vec![cid],
+            Ok(None) => vec![],
+            Err(e) => {
+                eprintln!("Failed to get head: {:?}", e);
+                vec![]
+            }
+        };
+
+        match dag::DagNode::new(
+            "post:v1".to_string(),
+            payload,
+            prev,
+            &self.keypair,
+            0
+        ) {
+            Ok(node) => {
+                println!("Created post node: {}", node.id);
+                // 1. Store locally
+                if let Err(e) = self.store.put_node(&node) {
+                    eprintln!("Failed to store post node: {:?}", e);
+                    return;
+                }
+                
+                // 2. Update head
+                if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                    eprintln!("Failed to update head: {:?}", e);
+                }
+
+                // 3. Publish CID to gossipsub
+                let topic = gossipsub::IdentTopic::new("blocks");
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                    eprintln!("Failed to publish post CID: {:?}", e);
+                }
+                
+                // 4. Notify frontend so it can display immediately
+                let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                
+                // 5. Replicate
+                self.replicate_block(&node);
+            }
+            Err(e) => eprintln!("Failed to create post node: {:?}", e),
+        }
+    }
+
+    async fn process_send_message(&mut self, recipient: String, content: String, group_id: Option<String>) {
+        if !self.is_caller_verified() {
+            eprintln!("Cannot send message: User is not verified.");
+            return;
+        }
+        // 1. Fetch recipient's profile to get their public key
+        let recipient_pubkey_bytes = match self.store.get_profile(&recipient) {
+            Ok(Some(profile)) => {
+                if let Some(pk_hex) = profile.encryption_pubkey {
+                    match hex::decode(pk_hex) {
+                        Ok(bytes) => {
+                            if bytes.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&bytes);
+                                Some(x25519_dalek::PublicKey::from(arr))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(recipient_pk) = recipient_pubkey_bytes {
+            // 2. Generate ephemeral keypair
+            let ephemeral_secret = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+            let ephemeral_public = x25519_dalek::PublicKey::from(&ephemeral_secret);
+
+            // 3. Perform ECDH
+            let shared_secret = ephemeral_secret.diffie_hellman(&recipient_pk);
+
+            // 4. Encrypt
+            let key = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes()));
+            let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
+            
+            match key.encrypt(&nonce, content.as_bytes()) {
+                Ok(ciphertext_bytes) => {
+                    let payload = dag::DagPayload::Message(dag::MessagePayload {
+                        recipient: recipient.clone(),
+                        ciphertext: hex::encode(ciphertext_bytes),
+                        nonce: hex::encode(nonce),
+                        ephemeral_pubkey: hex::encode(ephemeral_public.to_bytes()),
+                        group_id: group_id.clone(),
+                    });
+
+                    // Get previous head for this user if any
+                    let author_pubkey = self.keypair.public();
+                    let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+                    
+                    let prev = match self.store.get_head(&author_hex) {
+                        Ok(Some(cid)) => vec![cid],
+                        Ok(None) => vec![],
+                        Err(e) => {
+                            eprintln!("Failed to get head: {:?}", e);
+                            vec![]
+                        }
+                    };
+
+                    match dag::DagNode::new(
+                        "message:v1".to_string(),
+                        payload,
+                        prev,
+                        &self.keypair,
+                        0
+                    ) {
+                        Ok(node) => {
+                            println!("Created encrypted message node: {}", node.id);
+                            // 1. Store locally
+                            if let Err(e) = self.store.put_node(&node) {
+                                eprintln!("Failed to store message node: {:?}", e);
+                                return;
+                            }
+                            
+                            // 2. Update head
+                            if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                                eprintln!("Failed to update head: {:?}", e);
+                            }
+
+                            // 3. Publish CID to gossipsub
+                            let topic = gossipsub::IdentTopic::new("blocks");
+                            if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                                eprintln!("Failed to publish message CID: {:?}", e);
+                            }
+                            
+                            // 4. Replicate
+                            self.replicate_block(&node);
+                        }
+                        Err(e) => eprintln!("Failed to create message node: {:?}", e),
+                    }
+                }
+                Err(e) => eprintln!("Failed to encrypt message: {:?}", e),
+            }
+        } else {
+            eprintln!("Recipient has no public key published or invalid.");
+        }
+    }
+
+    async fn process_publish_profile(&mut self, name: String, bio: String, photo: Option<String>) {
+        let author_pubkey = self.keypair.public();
+        let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+        
+        // Check if we already have a founder_id from previous profile
+        let mut founder_id = None;
+        
+        // Get previous head for this user if any
+        let prev = match self.store.get_head(&author_hex) {
+            Ok(Some(cid)) => {
+                // Check if previous head was a profile and had founder_id
+                if let Ok(Some(node)) = self.store.get_node(&cid) {
+                     if let dag::DagPayload::Profile(p) = node.payload {
+                         founder_id = p.founder_id;
+                     }
+                }
+                vec![cid]
+            },
+            Ok(None) => vec![],
+            Err(e) => {
+                eprintln!("Failed to get head: {:?}", e);
+                vec![]
+            }
+        };
+
+        // If no founder_id, check if we can claim it
+        if founder_id.is_none() {
+            match self.store.count_unique_profiles() {
+                Ok(count) => {
+                    if count < 100 {
+                        founder_id = Some((count + 1) as u32);
+                    }
+                }
+                Err(e) => eprintln!("Failed to count profiles: {:?}", e),
+            }
+        }
+
+        let encryption_pubkey = Some(hex::encode(x25519_dalek::PublicKey::from(&self.encryption_keypair).to_bytes()));
+
+        let payload = dag::DagPayload::Profile(dag::ProfilePayload { name, bio, founder_id, encryption_pubkey, photo });
+        
+        match dag::DagNode::new(
+            "profile:v1".to_string(),
+            payload,
+            prev,
+            &self.keypair,
+            0
+        ) {
+            Ok(node) => {
+                println!("Created profile node: {}", node.id);
+                // 1. Store locally
+                if let Err(e) = self.store.put_node(&node) {
+                    eprintln!("Failed to store profile node: {:?}", e);
+                    return;
+                }
+                
+                // 2. Update head
+                if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                    eprintln!("Failed to update head: {:?}", e);
+                }
+
+                // 3. Publish CID to gossipsub
+                let topic = gossipsub::IdentTopic::new("blocks");
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                    eprintln!("Failed to publish profile CID: {:?}", e);
+                }
+
+                // Emit event
+                let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
+                
+                // 4. Replicate
+                self.replicate_block(&node);
+            }
+            Err(e) => eprintln!("Failed to create profile node: {:?}", e),
+        }
+    }
+
+    async fn process_vouch(&mut self, target_peer_id: String) {
+        if !self.is_caller_verified() {
+            eprintln!("Cannot vouch: User is not verified.");
+            return;
+        }
+
+        let author_pubkey = self.keypair.public();
+        let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
+
+        // Check 1: Prevent self-vouch
+        if target_peer_id == author_hex {
+            eprintln!("Cannot vouch for yourself.");
+            return;
+        }
+
+        // Check 2: Prevent duplicate vouch
+        if let Ok(existing_proofs) = self.store.get_proofs(&target_peer_id) {
+            if existing_proofs.iter().any(|p| p.author == author_hex) {
+                eprintln!("Cannot vouch: You have already vouched for this user.");
+                return;
+            }
+        }
+
+
+        let payload = dag::DagPayload::Proof(dag::ProofPayload { target_pubkey: target_peer_id });
+        
+        let prev = match self.store.get_head(&author_hex) {
+            Ok(Some(cid)) => vec![cid],
+            Ok(None) => vec![],
+            Err(e) => {
+                eprintln!("Failed to get head: {:?}", e);
+                vec![]
+            }
+        };
+
+        match dag::DagNode::new(
+            "proof:v1".to_string(),
+            payload,
+            prev,
+            &self.keypair,
+            0
+        ) {
+            Ok(node) => {
+                println!("Created proof node: {}", node.id);
+                // 1. Store locally
+                if let Err(e) = self.store.put_node(&node) {
+                    eprintln!("Failed to store proof node: {:?}", e);
+                    return;
+                }
+                
+                // 2. Update head
+                if let Err(e) = self.store.update_head(&author_hex, &node.id) {
+                    eprintln!("Failed to update head: {:?}", e);
+                }
+
+                // 3. Publish CID to gossipsub
+                let topic = gossipsub::IdentTopic::new("blocks");
+                if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
+                    eprintln!("Failed to publish proof CID: {:?}", e);
+                }
+                
+                // 4. Replicate
+                self.replicate_block(&node);
+            }
+            Err(e) => eprintln!("Failed to create proof node: {:?}", e),
+        }
+    }
+
     async fn handle_command(&mut self, cmd: AppCmd) {
         match cmd {
             AppCmd::Init => {
@@ -597,147 +920,10 @@ impl Backend {
                 self.replicate_block(&node);
             }
             AppCmd::PublishProfile { name, bio, photo } => {
-                let author_pubkey = self.keypair.public();
-                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
-                
-                // Check if we already have a founder_id from previous profile
-                let mut founder_id = None;
-                
-                // Get previous head for this user if any
-                let prev = match self.store.get_head(&author_hex) {
-                    Ok(Some(cid)) => {
-                        // Check if previous head was a profile and had founder_id
-                        if let Ok(Some(node)) = self.store.get_node(&cid) {
-                             if let dag::DagPayload::Profile(p) = node.payload {
-                                 founder_id = p.founder_id;
-                             }
-                        }
-                        vec![cid]
-                    },
-                    Ok(None) => vec![],
-                    Err(e) => {
-                        eprintln!("Failed to get head: {:?}", e);
-                        vec![]
-                    }
-                };
-
-                // If no founder_id, check if we can claim it
-                if founder_id.is_none() {
-                    match self.store.count_unique_profiles() {
-                        Ok(count) => {
-                            if count < 100 {
-                                founder_id = Some((count + 1) as u32);
-                            }
-                        }
-                        Err(e) => eprintln!("Failed to count profiles: {:?}", e),
-                    }
-                }
-
-                let encryption_pubkey = Some(hex::encode(x25519_dalek::PublicKey::from(&self.encryption_keypair).to_bytes()));
-
-                let payload = dag::DagPayload::Profile(dag::ProfilePayload { name, bio, founder_id, encryption_pubkey, photo });
-                
-                match dag::DagNode::new(
-                    "profile:v1".to_string(),
-                    payload,
-                    prev,
-                    &self.keypair,
-                    0
-                ) {
-                    Ok(node) => {
-                        println!("Created profile node: {}", node.id);
-                        // 1. Store locally
-                        if let Err(e) = self.store.put_node(&node) {
-                            eprintln!("Failed to store profile node: {:?}", e);
-                            return;
-                        }
-                        
-                        // 2. Update head
-                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
-                            eprintln!("Failed to update head: {:?}", e);
-                        }
-
-                        // 3. Publish CID to gossipsub
-                        let topic = gossipsub::IdentTopic::new("blocks");
-                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
-                            eprintln!("Failed to publish profile CID: {:?}", e);
-                        }
-
-                        // Emit event
-                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
-                        
-                        // 4. Replicate
-                        self.replicate_block(&node);
-                    }
-                    Err(e) => eprintln!("Failed to create profile node: {:?}", e),
-                }
+                self.process_publish_profile(name, bio, photo).await;
             }
             AppCmd::Vouch { target_peer_id } => {
-                if !self.is_caller_verified() {
-                    eprintln!("Cannot vouch: User is not verified.");
-                    return;
-                }
-
-                let author_pubkey = self.keypair.public();
-                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
-
-                // Check 1: Prevent self-vouch
-                if target_peer_id == author_hex {
-                    eprintln!("Cannot vouch for yourself.");
-                    return;
-                }
-
-                // Check 2: Prevent duplicate vouch
-                if let Ok(existing_proofs) = self.store.get_proofs(&target_peer_id) {
-                    if existing_proofs.iter().any(|p| p.author == author_hex) {
-                        eprintln!("Cannot vouch: You have already vouched for this user.");
-                        return;
-                    }
-                }
-
-
-                let payload = dag::DagPayload::Proof(dag::ProofPayload { target_pubkey: target_peer_id });
-                
-                let prev = match self.store.get_head(&author_hex) {
-                    Ok(Some(cid)) => vec![cid],
-                    Ok(None) => vec![],
-                    Err(e) => {
-                        eprintln!("Failed to get head: {:?}", e);
-                        vec![]
-                    }
-                };
-
-                match dag::DagNode::new(
-                    "proof:v1".to_string(),
-                    payload,
-                    prev,
-                    &self.keypair,
-                    0
-                ) {
-                    Ok(node) => {
-                        println!("Created proof node: {}", node.id);
-                        // 1. Store locally
-                        if let Err(e) = self.store.put_node(&node) {
-                            eprintln!("Failed to store proof node: {:?}", e);
-                            return;
-                        }
-                        
-                        // 2. Update head
-                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
-                            eprintln!("Failed to update head: {:?}", e);
-                        }
-
-                        // 3. Publish CID to gossipsub
-                        let topic = gossipsub::IdentTopic::new("blocks");
-                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
-                            eprintln!("Failed to publish proof CID: {:?}", e);
-                        }
-                        
-                        // 4. Replicate
-                        self.replicate_block(&node);
-                    }
-                    Err(e) => eprintln!("Failed to create proof node: {:?}", e),
-                }
+                self.process_vouch(target_peer_id).await;
             }
             AppCmd::FetchPosts => {
                 match self.store.get_recent_posts(50) {
@@ -756,71 +942,7 @@ impl Backend {
                 }
             }
             AppCmd::PublishPost { content, attachments, geohash, announcement } => {
-                if !self.is_caller_verified() {
-                    eprintln!("Cannot publish post: User is not verified.");
-                    return;
-                }
-                
-                // Permission check for announcements
-                if announcement {
-                    let author_pubkey = self.keypair.public();
-                    let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
-                    let officials = self.store.get_active_officials().unwrap_or_default();
-                    if !officials.values().any(|p| p == &author_hex) {
-                        eprintln!("Cannot publish announcement: User is not an elected official.");
-                        return;
-                    }
-                }
-                
-                let payload = dag::DagPayload::Post(dag::PostPayload { content, attachments, geohash, announcement });
-                
-                // Get previous head for this user if any
-                let author_pubkey = self.keypair.public();
-                let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
-                
-                let prev = match self.store.get_head(&author_hex) {
-                    Ok(Some(cid)) => vec![cid],
-                    Ok(None) => vec![],
-                    Err(e) => {
-                        eprintln!("Failed to get head: {:?}", e);
-                        vec![]
-                    }
-                };
-
-                match dag::DagNode::new(
-                    "post:v1".to_string(),
-                    payload,
-                    prev,
-                    &self.keypair,
-                    0
-                ) {
-                    Ok(node) => {
-                        println!("Created post node: {}", node.id);
-                        // 1. Store locally
-                        if let Err(e) = self.store.put_node(&node) {
-                            eprintln!("Failed to store post node: {:?}", e);
-                            return;
-                        }
-                        
-                        // 2. Update head
-                        if let Err(e) = self.store.update_head(&author_hex, &node.id) {
-                            eprintln!("Failed to update head: {:?}", e);
-                        }
-
-                        // 3. Publish CID to gossipsub
-                        let topic = gossipsub::IdentTopic::new("blocks");
-                        if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
-                            eprintln!("Failed to publish post CID: {:?}", e);
-                        }
-                        
-                        // 4. Notify frontend so it can display immediately
-                        let _ = self.event_tx.send(AppEvent::BlockReceived(node.clone()));
-                        
-                        // 5. Replicate
-                        self.replicate_block(&node);
-                    }
-                    Err(e) => eprintln!("Failed to create post node: {:?}", e),
-                }
+                self.process_publish_post(content, attachments, geohash, announcement).await;
             }
             AppCmd::PublishBlob { mime_type, data } => {
                 if !self.is_caller_verified() {
@@ -892,111 +1014,7 @@ impl Backend {
                 }
             }
             AppCmd::SendMessage { recipient, content, group_id } => {
-                // Note: We might want to allow unverified users to message verified users (e.g. to ask for verification)?
-                // The plan says "No app access whatsoever until verified".
-                // So strict blocking for now.
-                if !self.is_caller_verified() {
-                    eprintln!("Cannot send message: User is not verified.");
-                    return;
-                }
-                // 1. Fetch recipient's profile to get their public key
-                let recipient_pubkey_bytes = match self.store.get_profile(&recipient) {
-                    Ok(Some(profile)) => {
-                        if let Some(pk_hex) = profile.encryption_pubkey {
-                            match hex::decode(pk_hex) {
-                                Ok(bytes) => {
-                                    if bytes.len() == 32 {
-                                        let mut arr = [0u8; 32];
-                                        arr.copy_from_slice(&bytes);
-                                        Some(x25519_dalek::PublicKey::from(arr))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                Err(_) => None,
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
-
-                if let Some(recipient_pk) = recipient_pubkey_bytes {
-                    // 2. Generate ephemeral keypair
-                    let ephemeral_secret = x25519_dalek::StaticSecret::random_from_rng(OsRng);
-                    let ephemeral_public = x25519_dalek::PublicKey::from(&ephemeral_secret);
-
-                    // 3. Perform ECDH
-                    let shared_secret = ephemeral_secret.diffie_hellman(&recipient_pk);
-
-                    // 4. Encrypt
-                    let key = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes()));
-                    let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
-                    
-                    match key.encrypt(&nonce, content.as_bytes()) {
-                        Ok(ciphertext_bytes) => {
-                            let payload = dag::DagPayload::Message(dag::MessagePayload {
-                                recipient: recipient.clone(),
-                                ciphertext: hex::encode(ciphertext_bytes),
-                                nonce: hex::encode(nonce),
-                                ephemeral_pubkey: hex::encode(ephemeral_public.to_bytes()),
-                                group_id: group_id.clone(),
-                            });
-
-                            // Get previous head for this user if any
-                            let author_pubkey = self.keypair.public();
-                            let author_hex = libp2p::PeerId::from_public_key(&author_pubkey).to_string();
-                            
-                            let prev = match self.store.get_head(&author_hex) {
-                                Ok(Some(cid)) => vec![cid],
-                                Ok(None) => vec![],
-                                Err(e) => {
-                                    eprintln!("Failed to get head: {:?}", e);
-                                    vec![]
-                                }
-                            };
-
-                            match dag::DagNode::new(
-                                "message:v1".to_string(),
-                                payload,
-                                prev,
-                                &self.keypair,
-                                0
-                            ) {
-                                Ok(node) => {
-                                    println!("Created encrypted message node: {}", node.id);
-                                    // 1. Store locally
-                                    if let Err(e) = self.store.put_node(&node) {
-                                        eprintln!("Failed to store message node: {:?}", e);
-                                        return;
-                                    }
-                                    
-                                    // 2. Update head
-                                    if let Err(e) = self.store.update_head(&author_hex, &node.id) {
-                                        eprintln!("Failed to update head: {:?}", e);
-                                    }
-
-                                    // 3. Publish CID to gossipsub
-                                    let topic = gossipsub::IdentTopic::new("blocks");
-                                    if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic, node.id.as_bytes()) {
-                                        eprintln!("Failed to publish message CID: {:?}", e);
-                                    }
-                                    
-                                    // 4. Send directly to recipient if connected (for faster delivery)
-                                    // (Skipping optimization for now, relying on gossipsub/DHT)
-
-                                    // 5. Replicate
-                                    self.replicate_block(&node);
-                                }
-                                Err(e) => eprintln!("Failed to create message node: {:?}", e),
-                            }
-                        }
-                        Err(e) => eprintln!("Failed to encrypt message: {:?}", e),
-                    }
-                } else {
-                    eprintln!("Recipient has no public key published or invalid.");
-                }
+                self.process_send_message(recipient, content, group_id).await;
             }
             AppCmd::PublishStory { media_cid, caption, geohash } => {
                 if !self.is_caller_verified() {
@@ -2664,7 +2682,7 @@ impl Backend {
                 match self.store.set_storage_quota(quota_bytes) {
                     Ok(()) => {
                         // Fetch and emit updated quota status
-                        if let Ok((used, quota, percent, _)) = self.store.check_storage_quota() {
+                            if let Ok((used, _quota, percent, _)) = self.store.check_storage_quota() {
                             let _ = self.event_tx.send(AppEvent::StorageQuotaFetched {
                                 quota_mb,
                                 used_bytes: used,
@@ -3296,7 +3314,7 @@ impl Backend {
                 // 1. Create Blob (File Content)
                 let blob_payload = dag::DagPayload::Blob(dag::BlobPayload { 
                     mime_type: mime_type.clone(), 
-                    data: base64::encode(&data) 
+                    data: general_purpose::STANDARD.encode(&data) 
                 });
                 
                 let author_pubkey = self.keypair.public();
@@ -3530,7 +3548,7 @@ impl Backend {
             }
             SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(event)) => {
                 match event {
-                    request_response::Event::Message { peer, message } => {
+                    request_response::Event::Message { peer: _peer, message } => {
                         match message {
                             request_response::Message::Request { request, channel, .. } => {
                                 match request {
@@ -3676,7 +3694,7 @@ impl Backend {
                                     let query = url.trim_start_matches("search:term:").to_string();
                                     println!("Sending LocalSearch request for query: {}", query);
                                     for peer in providers {
-                                        let request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::LocalSearch(query.clone()));
+                                        let _request_id = self.swarm.behaviour_mut().request_response.send_request(&peer, BlockRequest::LocalSearch(query.clone()));
                                         // We don't necessarily need to track this in pending_requests for a block CID, 
                                         // but we can track it to handle errors if we want.
                                         // But BlockResponse::SearchResults processing doesn't rely on pending_requests map for CID.

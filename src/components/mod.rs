@@ -28,7 +28,9 @@ use crate::backend::dag::DagNode;
 #[derive(Clone, Copy)]
 pub struct AppState {
     pub peers: Signal<HashSet<String>>,
+    #[allow(dead_code)]
     pub blocks: Signal<Vec<DagNode>>,
+    #[allow(dead_code)]
     pub history: Signal<Vec<DagNode>>,
     pub messages: Signal<Vec<(DagNode, String)>>,
     pub groups: Signal<Vec<DagNode>>, // Group definitions
@@ -52,6 +54,7 @@ pub struct AppState {
     
     // Contracts
     pub contracts: Signal<Vec<DagNode>>,
+    #[allow(dead_code)]
     pub smart_contracts: Signal<Vec<DagNode>>, // Filtered for my contracts
     pub active_contract_history: Signal<Vec<DagNode>>,
     pub pending_contracts: Signal<Vec<DagNode>>, // Contracts awaiting my acceptance
@@ -59,6 +62,7 @@ pub struct AppState {
     
     // Governance
     pub proposals: Signal<Vec<DagNode>>,
+    #[allow(dead_code)]
     pub proposal_votes: Signal<std::collections::HashMap<String, Vec<DagNode>>>,
     pub proposal_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize, usize, usize, String)>>,
     pub current_tax_rate: Signal<u8>,
@@ -66,6 +70,7 @@ pub struct AppState {
     pub candidate_tallies: Signal<std::collections::HashMap<String, usize>>,
     pub recalls: Signal<Vec<DagNode>>,
     pub recall_tallies: Signal<std::collections::HashMap<String, (usize, usize, usize)>>,
+    #[allow(dead_code)]
     pub oversight_cases: Signal<Vec<DagNode>>,
     pub jury_duty: Signal<Vec<DagNode>>,
     pub reputation: Signal<Option<crate::backend::dag::ReputationDetails>>,
@@ -73,9 +78,12 @@ pub struct AppState {
     pub reports: Signal<Vec<DagNode>>,
     pub user_profiles: Signal<std::collections::HashMap<String, crate::backend::dag::ProfilePayload>>, // Cache
     pub files: Signal<Vec<DagNode>>,
+    #[allow(dead_code)]
     pub page_title: Signal<String>,
     pub browser_url: Signal<String>,
+    #[allow(dead_code)]
     pub browser_content: Signal<Option<String>>,
+    #[allow(dead_code)]
     pub active_tab: Signal<String>,
     pub user_posts: Signal<Vec<DagNode>>,
     pub following_posts: Signal<Vec<DagNode>>,
@@ -101,6 +109,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             peers: use_signal(|| HashSet::new()),

@@ -2,8 +2,7 @@ use dioxus::prelude::*;
 use crate::components::AppState;
 use crate::backend::AppCmd;
 use tokio::sync::mpsc::UnboundedSender;
-use crate::backend::dag::{DagPayload, ContractCallPayload};
-use crate::backend::dag::DagNode;
+use crate::backend::dag::DagPayload;
 use serde_json;
 
 #[component]

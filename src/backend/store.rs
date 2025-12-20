@@ -14,6 +14,7 @@ use chrono::{Utc, Duration};
 pub struct StorageStats {
     pub total_nodes: usize,
     pub total_bytes: usize,
+    #[allow(dead_code)]
     pub nodes_by_type: std::collections::HashMap<String, i64>,
 }
 
@@ -99,6 +100,7 @@ impl Store {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     pub fn new_in_memory() -> Result<Self, Box<dyn std::error::Error>> {
         let conn = Connection::open_in_memory()?;
         
@@ -400,6 +402,7 @@ impl Store {
 
     /// Retrieve a blob by CID
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     pub fn get_blob(&self, cid: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT data FROM blobs WHERE cid = ?1")?;
@@ -552,6 +555,7 @@ impl Store {
         Ok(posts)
     }
 
+    #[allow(dead_code)]
     pub fn get_posts_global(&self) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
          let mut posts: Vec<DagNode> = self.get_all_nodes()?
             .into_iter()
@@ -920,6 +924,7 @@ impl Store {
     }
 
     /// Count vouches made BY a specific user (not vouches FOR them)
+    #[allow(dead_code)]
     pub fn count_vouches_by(&self, author_id: &str) -> Result<usize, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let count = nodes.iter()
@@ -931,6 +936,7 @@ impl Store {
     }
 
     /// Get timestamp of most recent vouch by a user (for rate limiting)
+    #[allow(dead_code)]
     pub fn get_latest_vouch_time(&self, author_id: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let latest = nodes.iter()
@@ -941,6 +947,7 @@ impl Store {
     }
 
     /// Get profile creation time (for account age check)
+    #[allow(dead_code)]
     pub fn get_profile_created_time(&self, author_id: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let earliest = nodes.iter()
@@ -1010,6 +1017,7 @@ impl Store {
         Ok(latest_content.map(|(_, content)| content))
     }
 
+    #[allow(dead_code)]
     pub fn get_web_page_node(&self, url: &str) -> Result<Option<DagNode>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut latest_node: Option<(i64, DagNode)> = None;
@@ -1592,6 +1600,7 @@ impl Store {
         Ok(files)
     }
 
+    #[allow(dead_code)]
     pub fn get_file(&self, cid: &str) -> Result<Option<DagNode>, Box<dyn std::error::Error>> {
         self.get_node(cid)
     }
@@ -1679,6 +1688,7 @@ impl Store {
         Ok(duty)
     }
 
+    #[allow(dead_code)]
     pub fn get_jury_votes(&self, case_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut votes = Vec::new();
@@ -1822,6 +1832,7 @@ impl Store {
     }
 
     /// Get all exam submissions by a specific user
+    #[allow(dead_code)]
     pub fn get_exam_submissions(&self, peer_id: &str) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
         let submissions: Vec<DagNode> = self.get_all_nodes()?
             .into_iter()

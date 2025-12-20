@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use crate::backend::AppCmd;
 use crate::components::AppState;
-use crate::Route;
+
 
 #[component]
 pub fn BrowserComponent() -> Element {
