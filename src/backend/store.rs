@@ -587,6 +587,31 @@ impl Store {
         Ok(stories)
     }
 
+    pub fn get_local_stories(&self, geohash_prefix: &str, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let nodes = self.get_all_nodes()?;
+        let now = Utc::now();
+        let twenty_four_hours_ago = now - Duration::hours(24);
+
+        let mut stories: Vec<DagNode> = nodes.into_iter()
+            .filter(|n| {
+                if n.r#type == "story:v1" && n.timestamp > twenty_four_hours_ago {
+                    if let DagPayload::Story(ref story) = n.payload {
+                        if let Some(ref gh) = story.geohash {
+                            return gh.starts_with(geohash_prefix);
+                        }
+                    }
+                }
+                false
+            })
+            .collect();
+
+        stories.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        if stories.len() > limit {
+            stories.truncate(limit);
+        }
+        Ok(stories)
+    }
+
     pub fn get_following(&self, author_pubkey: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let nodes = self.get_all_nodes()?;
         let mut following = std::collections::HashSet::new();
@@ -713,6 +738,55 @@ impl Store {
                 // OR the node's own ID if it has no ref_cid (meaning it IS the original).
                 let chain_id = listing.ref_cid.clone().unwrap_or(node.id.clone());
                 
+                if !latest_listings_map.contains_key(&chain_id) {
+                    latest_listings_map.insert(chain_id, node.clone());
+                }
+            }
+        }
+        
+        // Filter for only Active status
+        let mut active_listings: Vec<DagNode> = latest_listings_map.into_values()
+            .filter(|node| {
+                if let DagPayload::Listing(ref listing) = node.payload {
+                    listing.status == crate::backend::dag::ListingStatus::Active
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        active_listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        if active_listings.len() > limit {
+            active_listings.truncate(limit);
+        }
+        Ok(active_listings)
+    }
+
+    /// Get active marketplace listings filtered by geohash prefix
+    pub fn get_local_listings(&self, geohash_prefix: &str, limit: usize) -> Result<Vec<DagNode>, Box<dyn std::error::Error>> {
+        let mut listings: Vec<DagNode> = self.get_all_nodes()?
+            .into_iter()
+            .filter(|n| {
+                if n.r#type == "listing:v1" {
+                    if let DagPayload::Listing(ref listing) = n.payload {
+                        if let Some(ref gh) = listing.geohash {
+                            return gh.starts_with(geohash_prefix);
+                        }
+                    }
+                }
+                false
+            })
+            .collect();
+            
+        // Sort by timestamp descending so latest is first
+        listings.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        
+        let mut latest_listings_map: std::collections::HashMap<String, DagNode> = std::collections::HashMap::new();
+
+        for node in listings {
+            if let DagPayload::Listing(ref listing) = node.payload {
+                let chain_id = listing.ref_cid.clone().unwrap_or(node.id.clone());
                 if !latest_listings_map.contains_key(&chain_id) {
                     latest_listings_map.insert(chain_id, node.clone());
                 }

@@ -191,6 +191,8 @@ pub struct ListingPayload {
     pub price: u64, // SUPER tokens
     pub image_cid: Option<String>,
     pub category: Option<String>,
+    #[serde(default)]
+    pub geohash: Option<String>,
     pub status: ListingStatus,
     pub ref_cid: Option<String>, // Reference to the original listing CID if this is an update
 }

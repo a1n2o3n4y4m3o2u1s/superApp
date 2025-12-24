@@ -7,7 +7,8 @@ use base64::{Engine as _, engine::general_purpose};
 pub fn HomeComponent() -> Element {
     let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
     let app_state = use_context::<crate::components::AppState>();
-    let app_state = use_context::<crate::components::AppState>();
+    
+    use crate::components::common::{BlobImage, StoryCircle, StoryViewer};
     
     let mut active_feed_tab = use_signal(|| "global".to_string());
     
@@ -132,7 +133,11 @@ pub fn HomeComponent() -> Element {
                      let cmd = AppCmd::PublishStory {
                          media_cid: blob_id.clone(),
                          caption: "".to_string(),
-                         geohash: None,
+                         geohash: if *app_state.geohash.read() != "Global" {
+                             Some(app_state.geohash.read().clone())
+                         } else {
+                             None
+                         },
                      };
                      let _ = cmd_tx_story.send(cmd);
                      let _ = cmd_tx_story.send(AppCmd::FetchStories);
@@ -179,34 +184,26 @@ pub fn HomeComponent() -> Element {
                     
                     // Stories List
                     for node in users_stories() {
-                        if let DagPayload::Story(story) = &node.payload {
-                            // Filter: Only show if following or self
-                            if node.author == local_peer_id_val || following.read().contains(&node.author) {
-                                {
-                                    let is_seen = seen_stories.read().contains(&node.id);
-                                    let ring_class = if is_seen {
-                                        "bg-gray-700"
-                                    } else {
-                                        "bg-gradient-to-tr from-yellow-400 to-fuchsia-600"
-                                    };
+                        {
+                            let is_seen = seen_stories.read().contains(&node.id);
+                            let local_peer_id_val = local_peer_id_val.clone();
+                            let following = following.read().clone();
+                            let mut seen_stories = seen_stories.clone();
+                            let mut viewed_story = viewed_story.clone();
 
-                                    rsx! {
-                                        div { 
-                                            class: "inline-block cursor-pointer",
-                                            onclick: move |_| {
-                                                seen_stories.write().insert(node.id.clone());
-                                                viewed_story.set(Some(node.clone()));
-                                            },
-                                            div { class: "w-16 h-16 rounded-full p-[2px] {ring_class}",
-                                                div { class: "w-full h-full rounded-full border-2 border-[var(--bg-default)] overflow-hidden bg-[var(--bg-secondary)]",
-                                                    // We show the image as thumbnail
-                                                    BlobImage { cid: story.media_cid.clone() }
-                                                }
-                                            }
-                                            div { class: "text-xs text-center mt-1 truncate w-16", "{node.author.get(0..4).unwrap_or(\"??\")}" }
+                            if node.author == local_peer_id_val || following.contains(&node.author) {
+                                rsx! {
+                                    StoryCircle {
+                                        node: node.clone(),
+                                        is_seen: is_seen,
+                                        onclick: move |n: DagNode| {
+                                            seen_stories.write().insert(n.id.clone());
+                                            viewed_story.set(Some(n));
                                         }
                                     }
                                 }
+                            } else {
+                                rsx! { div {} }
                             }
                         }
                     }
@@ -215,46 +212,9 @@ pub fn HomeComponent() -> Element {
             
             // Story Viewer Modal
             if let Some(node) = viewed_story() {
-                if let DagPayload::Story(story) = node.payload {
-                    div { class: "fixed inset-0 z-50 bg-black flex items-center justify-center",
-                        onclick: move |_| viewed_story.set(None),
-                        div { class: "relative max-w-lg w-full h-full max-h-[90vh] flex flex-col",
-                            div { class: "absolute top-4 left-4 z-10 flex items-center gap-2",
-                                div { class: "w-8 h-8 rounded-full bg-gray-500 overflow-hidden flex items-center justify-center",
-                                     if let Some(profile) = user_profiles.read().get(&node.author) {
-                                         if let Some(photo) = &profile.photo {
-                                             BlobImage { cid: photo.clone() }
-                                         } else {
-                                             "{node.author.get(0..2).unwrap_or(\"??\")}"
-                                         }
-                                    } else {
-                                         "{node.author.get(0..2).unwrap_or(\"??\")}"
-                                     }
-                                }
-                                span { class: "text-white font-bold drop-shadow-md", "{node.author.get(0..8).unwrap_or(\"??\")}" }
-                                {
-                                    let time_str = node.timestamp.format("%H:%M").to_string();
-                                    rsx! { span { class: "text-white/70 text-sm drop-shadow-md", "{time_str}" } }
-                                }
-                            }
-                            
-                            div { class: "flex-1 flex items-center justify-center overflow-hidden",
-                                BlobImage { cid: story.media_cid.clone() }
-                            }
-                            
-                            if !story.caption.is_empty() {
-                                div { class: "absolute bottom-10 left-0 right-0 p-4 text-center text-white bg-gradient-to-t from-black/80 to-transparent",
-                                    "{story.caption}"
-                                }
-                            }
-                            
-                            button {
-                                class: "absolute top-4 right-4 text-white text-3xl font-bold opacity-70 hover:opacity-100",
-                                onclick: move |_| viewed_story.set(None),
-                                "×"
-                            }
-                        }
-                    }
+                StoryViewer {
+                    node: node,
+                    on_close: move |_| viewed_story.set(None)
                 }
             }
 
@@ -502,42 +462,6 @@ pub fn HomeComponent() -> Element {
     }
 }
 
-#[component]
-#[component]
-pub fn BlobImage(cid: String, class: Option<String>) -> Element {
-    let app_state = use_context::<crate::components::AppState>();
-    let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
-    
-    let cache = app_state.blob_cache.read();
-    let src = cache.get(&cid).cloned();
-    drop(cache);
-    
-    let cid_clone = cid.clone();
-    use_effect(move || {
-        let app_state = app_state.clone();
-        let cmd_tx = cmd_tx.clone();
-        if !app_state.blob_cache.read().contains_key(&cid_clone) {
-             let _ = cmd_tx.send(AppCmd::FetchBlock { cid: cid_clone.clone(), peer_id: None });
-        }
-    });
-
-    let extra_class = class.unwrap_or_default();
-
-    rsx! {
-        div { class: "w-full h-full {extra_class}",
-            if let Some(s) = src {
-                img {
-                    src: "{s}",
-                    class: "w-full h-auto object-cover"
-                }
-            } else {
-                div { class: "h-24 w-full bg-[var(--bg-surface)] animate-pulse flex items-center justify-center",
-                     span { class: "text-xs text-[var(--text-muted)]", "Loading..." }
-                }
-            }
-        }
-    }
-}
 
 #[component]
 fn CommentComponent(node: DagNode) -> Element {

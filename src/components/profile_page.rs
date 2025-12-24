@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use crate::backend::AppCmd;
+use crate::components::common::BlobImage;
 
 #[component]
 pub fn ProfileComponent(peer_id: Option<String>) -> Element {
@@ -255,7 +256,7 @@ pub fn ProfileComponent(peer_id: Option<String>) -> Element {
                                      rsx! {
                                          div { class: "aspect-square bg-[var(--bg-elevated)] relative overflow-hidden group cursor-pointer border border-[var(--border-color)] rounded-lg",
                                              if let Some(cid) = first_img {
-                                                  crate::components::home_page::BlobImage { cid: cid.clone(), class: "w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" }
+                                                   BlobImage { cid: cid.clone(), class: Some("w-full h-full object-cover transition-transform duration-500 group-hover:scale-110".to_string()) }
                                                   div { class: "absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300" }
                                              } else {
                                                  div { class: "w-full h-full flex items-center justify-center p-4 text-center text-xs text-[var(--text-muted)] group-hover:text-[var(--text-primary)] transition-colors", "{content}" }

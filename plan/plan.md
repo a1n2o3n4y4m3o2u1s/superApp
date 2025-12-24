@@ -284,3 +284,4 @@ Unchanged and intact:
 - **2025-12-13**: Completed exam-taking functionality with `ExamTakingModal`, score calculation, and result display
 - **2025-12-13**: Refined Education UI with `CourseDetailComponent` and `CreateExamForm` for better course authoring and viewing experience
 - **2025-12-13**: Implemented Certification Gating for Governance (Proposals & Candidacy) requiring specific certifications.
+- **2025-12-20**: Integrated Smart Contracts into SuperWeb-first architecture; added to homepage pinned apps and updated Marketplace navigation.

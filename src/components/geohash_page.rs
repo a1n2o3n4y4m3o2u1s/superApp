@@ -1,10 +1,15 @@
 use dioxus::prelude::*;
-use crate::backend::{AppCmd, dag::{DagPayload, PostPayload}};
+use crate::backend::{AppCmd, dag::{DagPayload, PostPayload, DagNode}};
+use crate::components::AppState;
+use crate::components::common::{StoryCircle, StoryViewer};
 
 #[component]
 pub fn GeohashComponent() -> Element {
-    let app_state = use_context::<crate::components::AppState>();
+    let app_state = use_context::<AppState>();
     let cmd_tx = use_context::<tokio::sync::mpsc::UnboundedSender<AppCmd>>();
+    
+    let mut viewed_story = use_signal(|| None::<DagNode>);
+    let seen_stories = app_state.seen_stories;
 
     let mut precision = use_signal(|| 3usize); // Default: country level
     let mut new_local_post = use_signal(|| String::new());
@@ -39,6 +44,7 @@ pub fn GeohashComponent() -> Element {
     use_effect(move || {
         if !geohash_prefix_fetch.is_empty() {
             let _ = cmd_tx_fetch.send(AppCmd::FetchLocalPosts { geohash_prefix: geohash_prefix_fetch.clone() });
+            let _ = cmd_tx_fetch.send(AppCmd::FetchLocalStories { geohash_prefix: geohash_prefix_fetch.clone() });
         }
     });
 
@@ -67,6 +73,7 @@ pub fn GeohashComponent() -> Element {
     let on_refresh = move |_| {
         if !geohash_prefix_refresh.is_empty() {
             let _ = cmd_tx_refresh.send(AppCmd::FetchLocalPosts { geohash_prefix: geohash_prefix_refresh.clone() });
+            let _ = cmd_tx_refresh.send(AppCmd::FetchLocalStories { geohash_prefix: geohash_prefix_refresh.clone() });
         }
     };
 
@@ -129,6 +136,34 @@ pub fn GeohashComponent() -> Element {
                                 }
                             }
                             button { class: "btn btn-primary", onclick: on_post_local, "Post Locally" }
+                        }
+                    }
+                    // Local Stories
+                    if !app_state.local_stories.read().is_empty() {
+                        div { class: "panel",
+                            div { class: "panel-header",
+                                h2 { class: "panel-title", "Local Stories" }
+                            }
+                            div { class: "flex gap-4 overflow-x-auto py-2 whitespace-nowrap scrollbar-hide",
+                                for node in app_state.local_stories.read().iter() {
+                                    {
+                                        let is_seen = seen_stories.read().contains(&node.id);
+                                        let mut seen_stories = seen_stories.clone();
+                                        let mut viewed_story = viewed_story.clone();
+                                        
+                                        rsx! {
+                                            StoryCircle {
+                                                node: node.clone(),
+                                                is_seen: is_seen,
+                                                onclick: move |n: DagNode| {
+                                                    seen_stories.write().insert(n.id.clone());
+                                                    viewed_story.set(Some(n));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     
@@ -233,6 +268,14 @@ pub fn GeohashComponent() -> Element {
                         p { class: "label", "Precision Level" }
                         p { class: "text-lg mt-1", "{precision_labels[precision()]}" }
                     }
+                }
+            }
+            
+            // Story Viewer Modal
+            if let Some(node) = viewed_story() {
+                StoryViewer {
+                    node: node,
+                    on_close: move |_| viewed_story.set(None)
                 }
             }
         }

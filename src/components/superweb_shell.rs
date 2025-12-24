@@ -11,6 +11,7 @@ use crate::components::transparency_page::TransparencyComponent;
 use crate::components::browser_page::BrowserComponent;
 use crate::components::education_page::EducationComponent;
 use crate::components::verification_page::VerificationPage;
+use crate::components::smart_contracts_page::SmartContractsPage;
 
 /// SuperWebShell is the primary container for all modules in the SuperWeb-first architecture.
 /// It renders content based on the current `sp://` URL in app_state.browser_url.
@@ -33,6 +34,7 @@ pub fn SuperWebShell() -> Element {
         SuperWebRoute::Browser => rsx! { BrowserComponent {} },
         SuperWebRoute::Education => rsx! { EducationComponent {} },
         SuperWebRoute::Verify => rsx! { VerificationPage {} },
+        SuperWebRoute::Contracts => rsx! { SmartContractsPage {} },
         SuperWebRoute::UserProfile(peer_id) => rsx! { 
             crate::components::profile_page::UserProfileComponent { peer_id: peer_id } 
         },
@@ -86,6 +88,7 @@ pub fn SuperWebShell() -> Element {
                 ("Messages", "💬", "sp://messages.super", "Chat"),
                 ("Profile", "👤", "sp://profile.super", "Identity"),
                 ("Education", "🎓", "sp://edu.super", "Learn"),
+                ("Contracts", "📜", "sp://contracts.super", "Agreements"),
                 ("Publish", "✏️", "sp://browser.super", "Create pages"),
                 ("Verify", "✅", "sp://verify.super", "Accept users"),
             ];
@@ -310,6 +313,7 @@ enum SuperWebRoute {
     Browser,
     Education,
     Verify,
+    Contracts,
     UserProfile(String),
     WebContent(String),
     Welcome,
@@ -330,6 +334,7 @@ fn parse_superweb_url(url: &str) -> SuperWebRoute {
         "sp://browser.super" | "sp://browser.super/" | "sp://files.super" | "sp://files.super/" => SuperWebRoute::Browser,
         "sp://edu.super" | "sp://edu.super/" | "sp://learn.super" | "sp://learn.super/" => SuperWebRoute::Education,
         "sp://verify.super" | "sp://verify.super/" => SuperWebRoute::Verify,
+        "sp://contracts.super" | "sp://contracts.super/" => SuperWebRoute::Contracts,
         "sp://welcome" | "sp://welcome/" | "sp://super.app" | "sp://super.app/" => SuperWebRoute::Welcome,
         _ => {
             // Check for user profile: sp://profile.super/peer_id

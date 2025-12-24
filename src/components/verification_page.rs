@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use crate::backend::{AppCmd, VerificationStatus, dag::DagPayload};
+use crate::components::common::BlobImage;
 
 #[component]
 pub fn VerificationPage() -> Element {
@@ -235,9 +236,9 @@ pub fn VerificationPage() -> Element {
                                                         // Photo
                                                         if let Some(ref cid) = app_photo {
                                                             div { class: "w-20 h-20 rounded-lg overflow-hidden bg-[var(--bg-elevated)] flex-shrink-0",
-                                                                crate::components::home_page::BlobImage { 
+                                                                BlobImage { 
                                                                     cid: cid.clone(), 
-                                                                    class: "w-full h-full object-cover" 
+                                                                    class: Some("w-full h-full object-cover".to_string()) 
                                                                 }
                                                             }
                                                         } else {

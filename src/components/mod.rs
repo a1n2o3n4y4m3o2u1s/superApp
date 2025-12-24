@@ -11,6 +11,7 @@ pub mod transparency_page;
 pub mod superweb_shell;
 pub mod education_page;
 pub mod smart_contracts_page;
+pub mod common;
 
 
 
@@ -50,6 +51,7 @@ pub struct AppState {
     pub storage_stats: Signal<(usize, usize)>, // (block_count, total_bytes)
     pub local_posts: Signal<Vec<DagNode>>,
     pub listings: Signal<Vec<DagNode>>,
+    pub local_listings: Signal<Vec<DagNode>>,
     pub web_search_results: Signal<Vec<DagNode>>,
     
     // Contracts
@@ -93,8 +95,9 @@ pub struct AppState {
     pub ministries: Signal<Vec<String>>,
     pub likes: Signal<std::collections::HashMap<String, (usize, bool)>>, // TargetID -> (Count, IsLikedByMe)
     pub stories: Signal<Vec<DagNode>>,
-    pub seen_stories: Signal<HashSet<String>>,
-    pub following: Signal<HashSet<String>>,
+    pub seen_stories: Signal<std::collections::HashSet<String>>,
+    pub local_stories: Signal<Vec<DagNode>>,
+    pub following: Signal<Vec<String>>,
     // Education System
     pub courses: Signal<Vec<DagNode>>,
     pub exams: Signal<Vec<DagNode>>,
@@ -133,6 +136,7 @@ impl AppState {
             storage_stats: use_signal(|| (0, 0)),
             local_posts: use_signal(|| vec![]),
             listings: use_signal(|| vec![]),
+            local_listings: use_signal(|| vec![]),
             web_search_results: use_signal(|| vec![]),
             contracts: use_signal(|| vec![]),
             smart_contracts: use_signal(|| vec![]),
@@ -166,8 +170,9 @@ impl AppState {
             comments: use_signal(|| std::collections::HashMap::new()),
             likes: use_signal(|| std::collections::HashMap::new()),
             stories: use_signal(|| vec![]),
-            seen_stories: use_signal(|| HashSet::new()),
-            following: use_signal(|| HashSet::new()),
+            seen_stories: use_signal(|| std::collections::HashSet::new()),
+            local_stories: use_signal(|| vec![]),
+            following: use_signal(|| vec![]),
             courses: use_signal(|| vec![]),
             exams: use_signal(|| vec![]),
             certifications: use_signal(|| vec![]),

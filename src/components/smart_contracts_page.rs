@@ -108,19 +108,31 @@ fn ContractList(on_select: EventHandler<String>) -> Element {
     let app_state = use_context::<AppState>();
     let contracts = app_state.contracts.read();
     
-    // Filter contracts where I am relevant (MVP: just show all for now, or those I authored)
-    // Actually, we should parse the init_params to see if my Key follows "employer", "employee", "tenant", etc.
-    // For now, let's just list all contracts found in the DAG to verify functionality.
+    let my_id = app_state.local_peer_id.read().clone();
+    
+    // Filter contracts where I am relevant
+    let my_contracts: Vec<_> = contracts.iter()
+        .filter(|node| {
+            if let DagPayload::Contract(c) = &node.payload {
+                if node.author == my_id { return true; }
+                let params: serde_json::Value = serde_json::from_str(&c.init_params).unwrap_or(serde_json::json!({}));
+                let parties = &params["parties"];
+                let provider = parties["provider"].as_str().unwrap_or("");
+                let consumer = parties["consumer"].as_str().unwrap_or("");
+                return provider == my_id || consumer == my_id;
+            }
+            false
+        })
+        .collect();
     
     rsx! {
         div { class: "grid gap-4",
-            if contracts.is_empty() {
-                div { class: "text-center opacity-50", "No active agreements found." }
+            if my_contracts.is_empty() {
+                div { class: "text-center opacity-50 py-8", "No agreements involving you found." }
             }
-            for node in contracts.iter() {
+            for node in my_contracts.iter() {
                 {
-                    let payload = &node.payload;
-                    if let DagPayload::Contract(c) = payload {
+                    if let DagPayload::Contract(c) = &node.payload {
                         let params: serde_json::Value = serde_json::from_str(&c.init_params).unwrap_or(serde_json::json!({}));
                         
                         // Modular Logic: Try to get title from metadata
@@ -335,6 +347,34 @@ fn ContractWizard(on_close: EventHandler<()>, on_create: EventHandler<()>) -> El
                                 option { value: "Bi-Weekly", "Bi-Weekly" }
                                 option { value: "Quarterly", "Quarterly" }
                                 option { value: "Lump Sum", "Lump Sum" }
+                            }
+                        }
+                    }
+                }
+
+                // Quick Pick for Peer IDs
+                if !app_state.peers.read().is_empty() {
+                    div { class: "mt-4 p-4 bg-base-200 rounded-lg",
+                        p { class: "text-xs font-bold mb-2 opacity-50 uppercase tracking-wider", "Quick Pick: Nearby Users" }
+                        div { class: "flex flex-wrap gap-2",
+                            for peer in app_state.peers.read().iter() {
+                                {
+                                    let peer_id = peer.clone();
+                                    let peer_id_label = format!("{}...", &peer_id[0..8]);
+                                    rsx! {
+                                        button { 
+                                            class: "btn btn-xs btn-outline",
+                                            onclick: move |_| {
+                                                if *contract_type.read() == "Payment" {
+                                                    landlord_id.set(peer_id.clone());
+                                                } else {
+                                                    borrower_id.set(peer_id.clone());
+                                                }
+                                            },
+                                            "👤 {peer_id_label}"
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

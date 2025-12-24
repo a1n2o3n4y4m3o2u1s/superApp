@@ -21,8 +21,6 @@ pub enum Route {
         #[route("/")]
         SuperWebShell {},
 
-        #[route("/smart_contracts")]
-        SmartContractsPage {},
         #[end_layout]
     
     #[route("/verify")]
@@ -53,6 +51,7 @@ struct EventSignals {
     storage_stats: Signal<(usize, usize)>,
     local_posts: Signal<Vec<DagNode>>,
     listings: Signal<Vec<DagNode>>,
+    local_listings: Signal<Vec<DagNode>>,
     web_search_results: Signal<Vec<DagNode>>,
     contracts: Signal<Vec<DagNode>>,
     active_contract_history: Signal<Vec<DagNode>>,
@@ -81,7 +80,9 @@ struct EventSignals {
     comments: Signal<std::collections::HashMap<String, Vec<DagNode>>>,
     likes: Signal<std::collections::HashMap<String, (usize, bool)>>,
     stories: Signal<Vec<DagNode>>,
-    following: Signal<HashSet<String>>,
+    local_stories: Signal<Vec<DagNode>>,
+    seen_stories: Signal<HashSet<String>>,
+    following: Signal<Vec<String>>,
     user_posts: Signal<Vec<DagNode>>,
     following_posts: Signal<Vec<DagNode>>,
     courses: Signal<Vec<DagNode>>,
@@ -186,9 +187,11 @@ fn handle_app_event(event: AppEvent, sigs: &mut EventSignals, cmd_tx: &tokio::sy
                     if node.author == sigs.local_peer_id.read().clone() {
                         if let backend::dag::DagPayload::Follow(f) = &node.payload {
                             if f.follow {
-                                sigs.following.write().insert(f.target.clone());
+                                if !sigs.following.read().contains(&f.target) {
+                                    sigs.following.write().push(f.target.clone());
+                                }
                             } else {
-                                sigs.following.write().remove(&f.target);
+                                sigs.following.write().retain(|x| x != &f.target);
                             }
                         }
                     }
@@ -213,6 +216,9 @@ fn handle_app_event(event: AppEvent, sigs: &mut EventSignals, cmd_tx: &tokio::sy
         }
         AppEvent::ListingsFetched(fetched_listings) => {
             sigs.listings.set(fetched_listings);
+        }
+        AppEvent::LocalListingsFetched(fetched_listings) => {
+            sigs.local_listings.set(fetched_listings);
         }
         AppEvent::WebSearchResults(results) => {
             sigs.web_search_results.set(results);
@@ -268,8 +274,11 @@ fn handle_app_event(event: AppEvent, sigs: &mut EventSignals, cmd_tx: &tokio::sy
         AppEvent::AllWebPagesFetched(pages) => {
             sigs.all_web_pages.set(pages);
         }
-        AppEvent::GroupsFetched(fetched_groups) => {
-            sigs.groups.set(fetched_groups);
+        AppEvent::StoriesFetched(fetched_stories) => {
+            sigs.stories.set(fetched_stories);
+        }
+        AppEvent::LocalStoriesFetched(fetched_stories) => {
+            sigs.local_stories.set(fetched_stories);
         }
         AppEvent::GroupMessagesFetched(msgs) => {
             if !msgs.is_empty() {
@@ -302,15 +311,8 @@ fn handle_app_event(event: AppEvent, sigs: &mut EventSignals, cmd_tx: &tokio::sy
         AppEvent::LikesFetched { target_id, count, is_liked_by_me } => {
             sigs.likes.write().insert(target_id, (count, is_liked_by_me));
         }
-        AppEvent::StoriesFetched(s) => {
-            sigs.stories.set(s);
-        }
         AppEvent::FollowingFetched(f) => {
-            let mut set = HashSet::new();
-            for id in f {
-                set.insert(id);
-            }
-            sigs.following.set(set);
+            sigs.following.set(f);
         }
         AppEvent::UserPostsFetched(p) => {
             sigs.user_posts.set(p);
@@ -370,6 +372,7 @@ fn App() -> Element {
     let storage_stats = use_signal(|| (0usize, 0usize));
     let local_posts = use_signal(|| Vec::<DagNode>::new());
     let listings = use_signal(|| Vec::<DagNode>::new());
+    let local_listings = use_signal(|| Vec::<DagNode>::new());
     let web_search_results = use_signal(|| Vec::<DagNode>::new());
     let contracts = use_signal(|| Vec::<DagNode>::new());
     let smart_contracts = use_signal(|| Vec::<DagNode>::new());
@@ -396,8 +399,9 @@ fn App() -> Element {
     let comments = use_signal(|| std::collections::HashMap::<String, Vec<DagNode>>::new());
     let likes = use_signal(|| std::collections::HashMap::<String, (usize, bool)>::new());
     let stories = use_signal(|| Vec::<DagNode>::new());
+    let local_stories = use_signal(|| Vec::<DagNode>::new());
     let seen_stories = use_signal(|| HashSet::<String>::new());
-    let following = use_signal(|| HashSet::<String>::new());
+    let following = use_signal(|| Vec::<String>::new());
     let user_posts = use_signal(|| Vec::<DagNode>::new());
     let following_posts = use_signal(|| Vec::<DagNode>::new());
     // Education System
@@ -415,11 +419,11 @@ fn App() -> Element {
     let groups = use_signal(|| Vec::<DagNode>::new());
     let group_messages = use_signal(|| std::collections::HashMap::<String, Vec<(DagNode, String)>>::new());
     
-    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, web_search_results, contracts, smart_contracts, active_contract_history, pending_contracts, contract_states, proposals, proposal_votes, proposal_tallies, current_tax_rate, candidates, candidate_tallies, recalls,
+    use_context_provider(|| AppState { messages, blocks, history, user_profiles, page_title, browser_url, browser_content, active_tab, peers, local_peer_id, profile, balance, pending_transfers, geohash, ubi_timer, verification_status, viewed_profile, web_content, posts, blob_cache, last_created_blob, storage_stats, local_posts, listings, local_listings, web_search_results, contracts, smart_contracts, active_contract_history, pending_contracts, contract_states, proposals, proposal_votes, proposal_tallies, current_tax_rate, candidates, candidate_tallies, recalls,
         recall_tallies,
         oversight_cases,
         jury_duty,
-        reputation, my_web_pages, reports, groups, group_messages, files, public_ledger, file_search_results, ministries, comments, likes, stories, seen_stories, following, user_posts, following_posts, courses, exams, certifications, active_exam, pending_applications, exam_answers, exam_result, all_web_pages });
+        reputation, my_web_pages, reports, groups, group_messages, files, public_ledger, file_search_results, ministries, comments, likes, stories, local_stories, seen_stories, following, user_posts, following_posts, courses, exams, certifications, active_exam, pending_applications, exam_answers, exam_result, all_web_pages });
 
     // Initialize backend and context
     use_context_provider(|| {
@@ -459,6 +463,7 @@ fn App() -> Element {
                 storage_stats,
                 local_posts,
                 listings,
+                local_listings,
                 web_search_results,
                 contracts,
                 active_contract_history,
@@ -487,6 +492,8 @@ fn App() -> Element {
                 comments,
                 likes,
                 stories,
+                local_stories,
+                seen_stories,
                 following,
                 user_posts,
                 following_posts,

@@ -67,11 +67,12 @@ pub enum AppCmd {
     FetchStorageStats,
     SetStorageQuota { quota_mb: Option<u64> },  // None = unlimited
     FetchStorageQuota,
-    CreateListing { title: String, description: String, price: u64, image_cid: Option<String>, category: Option<String> },
+    CreateListing { title: String, description: String, price: u64, image_cid: Option<String>, category: Option<String>, geohash: Option<String> },
     BuyListing { listing_id: String },
     UpdateListingStatus { listing_id: String, status: dag::ListingStatus },
     SearchListings { query: String },
     FetchListings,
+    FetchLocalListings { geohash_prefix: String },
 
     SearchWeb { query: String },
     SearchFiles { query: String },
@@ -124,6 +125,7 @@ pub enum AppCmd {
     FetchMinistries,
     PublishStory { media_cid: String, caption: String, geohash: Option<String> },
     FetchStories,
+    FetchLocalStories { geohash_prefix: String },
     FollowUser { target: String, follow: bool },
     FetchFollowing { target: String },
     FetchFollowers { target: String },
@@ -175,6 +177,7 @@ pub enum AppEvent {
     StorageWarning { used_percent: u8, message: String },
     LocalPostsFetched(Vec<dag::DagNode>),
     ListingsFetched(Vec<dag::DagNode>),
+    LocalListingsFetched(Vec<dag::DagNode>),
     WebSearchResults(Vec<dag::DagNode>),
     FileSearchResults(Vec<dag::DagNode>),
     ContractsFetched(Vec<dag::DagNode>),
@@ -207,6 +210,7 @@ pub enum AppEvent {
     LikesFetched { target_id: String, count: usize, is_liked_by_me: bool },
     MinistriesFetched(Vec<String>),
     StoriesFetched(Vec<dag::DagNode>),
+    LocalStoriesFetched(Vec<dag::DagNode>),
     FollowingFetched(Vec<String>),
     #[allow(dead_code)]
     FollowersFetched(Vec<String>),
@@ -1069,6 +1073,14 @@ impl Backend {
                         let _ = self.event_tx.send(AppEvent::StoriesFetched(stories));
                     }
                     Err(e) => eprintln!("Failed to fetch stories: {:?}", e),
+                }
+            }
+            AppCmd::FetchLocalStories { geohash_prefix } => {
+                match self.store.get_local_stories(&geohash_prefix, 50) {
+                    Ok(stories) => {
+                        let _ = self.event_tx.send(AppEvent::LocalStoriesFetched(stories));
+                    }
+                    Err(e) => eprintln!("Failed to fetch local stories: {:?}", e),
                 }
             }
             AppCmd::FollowUser { target, follow } => {
@@ -2057,6 +2069,15 @@ impl Backend {
                     Err(e) => eprintln!("Failed to fetch listings: {:?}", e),
                 }
             }
+            
+            AppCmd::FetchLocalListings { geohash_prefix } => {
+                match self.store.get_local_listings(&geohash_prefix, 50) {
+                    Ok(listings) => {
+                        let _ = self.event_tx.send(AppEvent::LocalListingsFetched(listings));
+                    }
+                    Err(e) => eprintln!("Failed to fetch local listings: {:?}", e),
+                }
+            }
 
             AppCmd::SearchWeb { query } => {
                 // 1. Local Search
@@ -2720,7 +2741,7 @@ impl Backend {
                 }
             }
 
-            AppCmd::CreateListing { title, description, price, image_cid, category } => {
+            AppCmd::CreateListing { title, description, price, image_cid, category, geohash } => {
                 if !self.is_caller_verified() {
                     eprintln!("Cannot create listing: User is not verified.");
                     return;
@@ -2741,6 +2762,7 @@ impl Backend {
                     price,
                     image_cid,
                     category,
+                    geohash,
                     status: dag::ListingStatus::Active,
                     ref_cid: None,
                 });
@@ -2859,6 +2881,7 @@ impl Backend {
                                  price: listing.price,
                                  image_cid: listing.image_cid,
                                  category: listing.category.clone(),
+                                 geohash: listing.geohash.clone(),
                                  status: status,
                                  ref_cid: Some(listing.ref_cid.clone().unwrap_or(listing_id.clone())),
                              });
